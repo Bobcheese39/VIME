@@ -11,17 +11,40 @@ Keeps HDF5 data in memory so files only need to be loaded once.
 import sys
 import json
 import os
-from plotter import braille_plot
-import numpy as np
-import pandas as pd
-from tabulate import tabulate
+
+try:
+    from plotter import braille_plot
+    import numpy as np
+    import pandas as pd
+    import h5py
+    from tabulate import tabulate
+except Exception as exc:
+    sys.stderr.write(f"VIME server import error: {exc}\n")
+    sys.exit(1)
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy types transparently."""
+
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 
 class VimeServer:
     """Persistent server that holds H5 data and responds to Vim commands."""
 
     def __init__(self):
-        self.store = None          # pd.HDFStore object
+        self.store = None          # pd.HDFStore object (pandas backend)
+        self.h5file = None         # h5py.File object (h5py fallback backend)
+        self.backend = None        # "pandas" or "h5py"
         self.filepath = None       # Path to the currently open file
         self.current_df = None     # Last-fetched DataFrame
         self.current_table = None  # Name of the last-fetched table
@@ -53,46 +76,91 @@ class VimeServer:
     # Commands
     # ------------------------------------------------------------------
 
+    def _close_handles(self):
+        """Close any open file handles."""
+        if self.store is not None:
+            try:
+                self.store.close()
+            except Exception:
+                pass
+            self.store = None
+        if self.h5file is not None:
+            try:
+                self.h5file.close()
+            except Exception:
+                pass
+            self.h5file = None
+        self.backend = None
+
     def cmd_open(self, payload):
         """Open an HDF5 file and return the list of tables."""
         filepath = payload.get("file", "")
         if not filepath or not os.path.isfile(filepath):
             return {"ok": False, "error": f"File not found: {filepath}"}
 
-        # Close any previously open store
-        if self.store is not None:
-            try:
-                self.store.close()
-            except Exception:
-                pass
-
+        self._close_handles()
         self.filepath = filepath
-        self.store = pd.HDFStore(filepath, mode="r")
         self.current_df = None
         self.current_table = None
+
+        # Try pandas HDFStore first (works for pandas-formatted H5 files)
+        pandas_ok = False
+        store = None
+        try:
+            store = pd.HDFStore(filepath, mode="r")
+            keys = store.keys()
+            if keys:
+                self.store = store
+                self.backend = "pandas"
+                pandas_ok = True
+                store = None          # hand off to self.store; don't close below
+            else:
+                store.close()
+                store = None
+        except Exception:
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    pass
+
+        # Fall back to h5py for non-pandas HDF5 files
+        if not pandas_ok:
+            try:
+                self.h5file = h5py.File(filepath, "r")
+                self.backend = "h5py"
+            except Exception as exc:
+                self.h5file = None
+                return {"ok": False, "error": f"Failed to open HDF5: {exc}"}
 
         tables = self._get_table_list()
         return {"ok": True, "tables": tables}
 
     def cmd_list(self, _payload):
         """Return the list of tables in the currently open file."""
-        if self.store is None:
+        if self.backend is None:
             return {"ok": False, "error": "No file open"}
         tables = self._get_table_list()
         return {"ok": True, "tables": tables}
 
     def cmd_table(self, payload):
         """Read a table and return its formatted content."""
-        if self.store is None:
+        if self.backend is None:
             return {"ok": False, "error": "No file open"}
 
         name = payload.get("name", "")
         head = payload.get("head", 100)
 
-        if name not in self.store:
-            return {"ok": False, "error": f"Table not found: {name}"}
+        if self.backend == "pandas":
+            if name not in self.store:
+                return {"ok": False, "error": f"Table not found: {name}"}
+            df = pd.read_hdf(self.filepath, key=name)
+        else:
+            # h5py backend
+            df = self._h5py_read_dataset(name)
+            if df is None:
+                return {"ok": False, "error": f"Dataset not found: {name}"}
 
-        df = pd.read_hdf(self.filepath, key=name)
         self.current_df = df
         self.current_table = name
 
@@ -113,7 +181,7 @@ class VimeServer:
             shape_info += f"  (showing first {head})"
         header = f"{name}{shape_info}"
 
-        columns = list(df.columns)
+        columns = [str(c) for c in df.columns]
         return {
             "ok": True,
             "content": header + "\n\n" + content,
@@ -162,14 +230,19 @@ class VimeServer:
 
     def cmd_info(self, payload):
         """Return detailed info about a table."""
-        if self.store is None:
+        if self.backend is None:
             return {"ok": False, "error": "No file open"}
 
         name = payload.get("name", "")
-        if name not in self.store:
-            return {"ok": False, "error": f"Table not found: {name}"}
 
-        df = pd.read_hdf(self.filepath, key=name)
+        if self.backend == "pandas":
+            if name not in self.store:
+                return {"ok": False, "error": f"Table not found: {name}"}
+            df = pd.read_hdf(self.filepath, key=name)
+        else:
+            df = self._h5py_read_dataset(name)
+            if df is None:
+                return {"ok": False, "error": f"Dataset not found: {name}"}
 
         lines = []
         lines.append(f"Table: {name}")
@@ -180,7 +253,7 @@ class VimeServer:
         for i, col in enumerate(df.columns):
             dtype = df[col].dtype
             non_null = df[col].count()
-            lines.append(f"  {i:>3}  {col:<30} {str(dtype):<12} ({non_null} non-null)")
+            lines.append(f"  {i:>3}  {str(col):<30} {str(dtype):<12} ({non_null} non-null)")
         lines.append("─" * 50)
 
         # Numeric summary
@@ -196,11 +269,7 @@ class VimeServer:
 
     def cmd_close(self, _payload):
         """Close the store and exit."""
-        if self.store is not None:
-            try:
-                self.store.close()
-            except Exception:
-                pass
+        self._close_handles()
         sys.exit(0)
 
     # ------------------------------------------------------------------
@@ -209,16 +278,22 @@ class VimeServer:
 
     def _get_table_list(self):
         """Return a list of dicts with table metadata."""
+        if self.backend == "h5py":
+            return self._get_table_list_h5py()
+        return self._get_table_list_pandas()
+
+    def _get_table_list_pandas(self):
+        """Return table metadata using the pandas HDFStore backend."""
         tables = []
         for key in self.store.keys():
             try:
                 storer = self.store.get_storer(key)
-                nrows = storer.nrows if hasattr(storer, "nrows") else "?"
+                nrows = int(storer.nrows) if hasattr(storer, "nrows") else "?"
                 if hasattr(storer, "ncols"):
-                    ncols = storer.ncols
+                    ncols = int(storer.ncols)
                 elif hasattr(storer, "attrs") and hasattr(storer.attrs, "non_index_axes"):
                     axes = storer.attrs.non_index_axes
-                    ncols = len(axes[0][1]) if axes else "?"
+                    ncols = int(len(axes[0][1])) if axes else "?"
                 else:
                     ncols = "?"
             except Exception:
@@ -226,6 +301,52 @@ class VimeServer:
                 ncols = "?"
             tables.append({"name": key, "rows": nrows, "cols": ncols})
         return tables
+
+    def _get_table_list_h5py(self):
+        """Return dataset metadata using the h5py fallback backend."""
+        datasets = []
+
+        def _visitor(name, obj):
+            if isinstance(obj, h5py.Dataset):
+                shape = obj.shape
+                nrows = int(shape[0]) if len(shape) >= 1 else 1
+                ncols = int(shape[1]) if len(shape) >= 2 else 1
+                datasets.append({"name": "/" + name, "rows": nrows, "cols": ncols})
+
+        self.h5file.visititems(_visitor)
+        return datasets
+
+    def _h5py_read_dataset(self, name):
+        """Read an h5py dataset and return it as a DataFrame."""
+        # Strip leading slash for h5py lookup
+        key = name.lstrip("/")
+        if key not in self.h5file:
+            return None
+        ds = self.h5file[key]
+        if not isinstance(ds, h5py.Dataset):
+            return None
+
+        arr = ds[()]
+
+        # Handle structured arrays (compound dtypes, e.g. from MATLAB)
+        if arr.dtype.names is not None:
+            return pd.DataFrame({col: arr[col] for col in arr.dtype.names})
+
+        # Scalar
+        if arr.ndim == 0:
+            return pd.DataFrame({"value": [arr.item()]})
+
+        # 1-D array
+        if arr.ndim == 1:
+            return pd.DataFrame({0: arr})
+
+        # 2-D array
+        if arr.ndim == 2:
+            return pd.DataFrame(arr)
+
+        # Higher-dimensional: flatten trailing dims
+        reshaped = arr.reshape(arr.shape[0], -1)
+        return pd.DataFrame(reshaped)
 
     @staticmethod
     def _resolve_column(df, ref):
@@ -284,7 +405,12 @@ def main():
             response = server.dispatch(payload)
 
         # Send response: [msgid, result]
-        out = json.dumps([msgid, response])
+        try:
+            out = json.dumps([msgid, response], cls=NumpyEncoder)
+        except Exception as enc_err:
+            sys.stderr.write(f"VIME JSON encode error: {enc_err}\n")
+            out = json.dumps([msgid, {"ok": False,
+                                      "error": f"Internal encode error: {enc_err}"}])
         sys.stdout.write(out + "\n")
         sys.stdout.flush()
 

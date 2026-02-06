@@ -20,6 +20,11 @@ let g:loaded_vime = 1
 " Path to the python server script (relative to this plugin file)
 let s:script_dir = expand('<sfile>:p:h:h')
 let s:server_script = s:script_dir . '/python/vime_server.py'
+"
+" Optional: override python command for the server.
+" Examples:
+"   let g:vime_python_cmd = ['python', 'C:/path/to/venv/Scripts/python.exe']
+"   let g:vime_python_cmd = 'C:/path/to/venv/Scripts/python.exe'
 
 " State
 let s:job = v:null
@@ -40,7 +45,19 @@ function! s:StartServer() abort
         return 0
     endif
 
-    let l:cmd = ['python3', s:server_script]
+    let l:cmd = get(g:, 'vime_python_cmd', ['python3'])
+    if type(l:cmd) == v:t_list
+        if empty(l:cmd)
+            let l:cmd = ['python3']
+        endif
+        if l:cmd[-1] !=# s:server_script
+            call add(l:cmd, s:server_script)
+        endif
+    elseif type(l:cmd) == v:t_string
+        let l:cmd = l:cmd . ' ' . shellescape(s:server_script)
+    else
+        let l:cmd = ['python3', s:server_script]
+    endif
     let s:job = job_start(l:cmd, {
         \ 'mode': 'json',
         \ 'err_cb': function('s:OnServerError'),
