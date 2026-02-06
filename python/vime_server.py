@@ -11,16 +11,12 @@ Keeps HDF5 data in memory so files only need to be loaded once.
 import sys
 import json
 import os
+from plotter import braille_plot
+import numpy as np
+import pandas as pd
+import h5py
+from tabulate import tabulate
 
-try:
-    from plotter import braille_plot
-    import numpy as np
-    import pandas as pd
-    import h5py
-    from tabulate import tabulate
-except Exception as exc:
-    sys.stderr.write(f"VIME server import error: {exc}\n")
-    sys.exit(1)
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -81,14 +77,14 @@ class VimeServer:
         if self.store is not None:
             try:
                 self.store.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                sys.stderr.write(f"VIME: Warning - failed to close pandas store: {exc}\n")
             self.store = None
         if self.h5file is not None:
             try:
                 self.h5file.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                sys.stderr.write(f"VIME: Warning - failed to close h5py file: {exc}\n")
             self.h5file = None
         self.backend = None
 
@@ -105,24 +101,20 @@ class VimeServer:
 
         # Try pandas HDFStore first (works for pandas-formatted H5 files)
         pandas_ok = False
-        store = None
         try:
             store = pd.HDFStore(filepath, mode="r")
             keys = store.keys()
             if keys:
+                # Successfully opened with pandas and has tables
                 self.store = store
                 self.backend = "pandas"
                 pandas_ok = True
-                store = None          # hand off to self.store; don't close below
             else:
+                # No tables found, close and try h5py
                 store.close()
-                store = None
-        except Exception:
-            if store is not None:
-                try:
-                    store.close()
-                except Exception:
-                    pass
+        except Exception as exc:
+            # Not a pandas HDF5 file or other error, will try h5py fallback
+            sys.stderr.write(f"VIME: pandas HDFStore failed, trying h5py fallback: {exc}\n")
 
         # Fall back to h5py for non-pandas HDF5 files
         if not pandas_ok:
@@ -151,15 +143,9 @@ class VimeServer:
         name = payload.get("name", "")
         head = payload.get("head", 100)
 
-        if self.backend == "pandas":
-            if name not in self.store:
-                return {"ok": False, "error": f"Table not found: {name}"}
-            df = pd.read_hdf(self.filepath, key=name)
-        else:
-            # h5py backend
-            df = self._h5py_read_dataset(name)
-            if df is None:
-                return {"ok": False, "error": f"Dataset not found: {name}"}
+        df = self._load_table(name)
+        if df is None:
+            return {"ok": False, "error": f"Table not found: {name}"}
 
         self.current_df = df
         self.current_table = name
@@ -211,8 +197,16 @@ class VimeServer:
         except (IndexError, KeyError) as exc:
             return {"ok": False, "error": f"Invalid column: {exc}"}
 
-        x = df[x_col].values.astype(float)
-        y = df[y_col].values.astype(float)
+        # Convert to float with error handling for non-numeric data
+        try:
+            x = df[x_col].values.astype(float)
+        except (ValueError, TypeError) as exc:
+            return {"ok": False, "error": f"Cannot convert column '{x_col}' to numeric: {exc}"}
+        
+        try:
+            y = df[y_col].values.astype(float)
+        except (ValueError, TypeError) as exc:
+            return {"ok": False, "error": f"Cannot convert column '{y_col}' to numeric: {exc}"}
 
         # Remove NaN pairs
         mask = ~(np.isnan(x) | np.isnan(y))
@@ -235,14 +229,9 @@ class VimeServer:
 
         name = payload.get("name", "")
 
-        if self.backend == "pandas":
-            if name not in self.store:
-                return {"ok": False, "error": f"Table not found: {name}"}
-            df = pd.read_hdf(self.filepath, key=name)
-        else:
-            df = self._h5py_read_dataset(name)
-            if df is None:
-                return {"ok": False, "error": f"Dataset not found: {name}"}
+        df = self._load_table(name)
+        if df is None:
+            return {"ok": False, "error": f"Table not found: {name}"}
 
         lines = []
         lines.append(f"Table: {name}")
@@ -276,6 +265,20 @@ class VimeServer:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _load_table(self, name):
+        """Load a table/dataset as a DataFrame from either backend.
+        
+        Returns:
+            DataFrame if successful, None if not found.
+        """
+        if self.backend == "pandas":
+            if name not in self.store:
+                return None
+            return self.store[name]
+        else:
+            # h5py backend
+            return self._h5py_read_dataset(name)
+
     def _get_table_list(self):
         """Return a list of dicts with table metadata."""
         if self.backend == "h5py":
@@ -296,7 +299,8 @@ class VimeServer:
                     ncols = int(len(axes[0][1])) if axes else "?"
                 else:
                     ncols = "?"
-            except Exception:
+            except Exception as exc:
+                sys.stderr.write(f"VIME: Warning - could not get metadata for {key}: {exc}\n")
                 nrows = "?"
                 ncols = "?"
             tables.append({"name": key, "rows": nrows, "cols": ncols})
@@ -380,7 +384,13 @@ def main():
     server = VimeServer()
 
     # Ensure stdout is unbuffered for reliable communication
-    sys.stdout = os.fdopen(sys.stdout.fileno(), "w", buffering=1)
+    try:
+        sys.stdout = os.fdopen(sys.stdout.fileno(), "w", buffering=1)
+    except (OSError, ValueError) as exc:
+        # If reopening fails (e.g., on Windows or restricted environments),
+        # continue with the existing stdout and rely on manual flushing
+        sys.stderr.write(f"VIME: Warning - could not reopen stdout: {exc}\n")
+        sys.stderr.write("VIME: Continuing with default stdout buffering\n")
 
     for raw_line in sys.stdin:
         raw_line = raw_line.strip()
