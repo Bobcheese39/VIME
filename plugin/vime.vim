@@ -202,9 +202,9 @@ function! s:ApplyVimeColors() abort
 
     syntax clear
     " Border characters (outer frame)
-    syntax match VimeBorder /^[┌└][─]*[┐┘]$/
-    syntax match VimeBorder /^│/
-    syntax match VimeBorder /│$/
+    syntax match VimeBorder /[┏┓┗┛┣┫┳┻╋━┃]/
+    syntax match VimeBorder /^┃/
+    syntax match VimeBorder /┃$/
 
     " Header bar (solid color, entire line)
     syntax match VimeHeader /^│\? *VIME - .*$/
@@ -227,7 +227,7 @@ function! s:ApplyVimeColors() abort
     syntax match VimePlotData /[⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿⡀⡁⡂⡃⡄⡅⡆⡇⡈⡉⡊⡋⡌⡍⡎⡏⡐⡑⡒⡓⡔⡕⡖⡗⡘⡙⡚⡛⡜⡝⡞⡟⡠⡡⡢⡣⡤⡥⡦⡧⡨⡩⡪⡫⡬⡭⡮⡯⡰⡱⡲⡳⡴⡵⡶⡷⡸⡹⡺⡻⡼⡽⡾⡿⢀⢁⢂⢃⢄⢅⢆⢇⢈⢉⢊⢋⢌⢍⢎⢏⢐⢑⢒⢓⢔⢕⢖⢗⢘⢙⢚⢛⢜⢝⢞⢟⢠⢡⢢⢣⢤⢥⢦⢧⢨⢩⢪⢫⢬⢭⢮⢯⢰⢱⢲⢳⢴⢵⢶⢷⢸⢹⢺⢻⢼⢽⢾⢿⣀⣁⣂⣃⣄⣅⣆⣇⣈⣉⣊⣋⣌⣍⣎⣏⣐⣑⣒⣓⣔⣕⣖⣗⣘⣙⣚⣛⣜⣝⣞⣟⣠⣡⣢⣣⣤⣥⣦⣧⣨⣩⣪⣫⣬⣭⣮⣯⣰⣱⣲⣳⣴⣵⣶⣷⣸⣹⣺⣻⣼⣽⣾⣿]/
 
     " Table grid lines (heavy box-drawing from tabulate heavy_grid)
-    syntax match VimeGridLine /[┏┓┗┛┣┫┳┻╋━┃]/
+    syntax match VimeGridLine  /^[┌└][─]*[┐┘]$/
 endfunction
 
 " ======================================================================
@@ -433,6 +433,9 @@ function! s:DoPlot(col1, col2, plot_type, ...) abort
     " Optional arg: split direction ('v', 'h', or '' for no split)
     let l:split = a:0 >= 1 ? a:1 : ''
 
+    let l:orig_winid = win_getid()
+    let l:orig_bufnr = bufnr('%')
+
     " Try to convert to integers if they look numeric
     let l:c1 = a:col1 =~# '^\d\+$' ? str2nr(a:col1) : a:col1
     let l:c2 = a:col2 =~# '^\d\+$' ? str2nr(a:col2) : a:col2
@@ -471,11 +474,16 @@ function! s:DoPlot(col1, col2, plot_type, ...) abort
     setlocal laststatus=2
     setlocal statusline=%#VimeFooter#\ \ ,b\ Back\ to\ table\ \ │\ \ ,q\ Close%=
     call s:ApplyVimeColors()
+
+    if win_gotoid(l:orig_winid)
+        execute 'buffer ' . l:orig_bufnr
+    endif
 endfunction
 
 function! s:SetPlotKeybindings() abort
     nnoremap <buffer> <silent> ,b :call <SID>BackToTable()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
+    nnoremap <buffer> <silent> ,pq :call <SID>CloseBuf()<CR>
 endfunction
 
 " ======================================================================
