@@ -165,14 +165,14 @@ function! s:WrapWithBorder(lines) abort
 
     let l:result = []
     " Top border
-    call add(l:result, '┌' . repeat('─', l:maxw + 2) . '┐')
+    call add(l:result, '┏' . repeat('━', l:maxw + 2) . '┓')
     " Wrap each content line
     for l:line in a:lines
         let l:pad = l:maxw - strdisplaywidth(l:line)
-        call add(l:result, '│ ' . l:line . repeat(' ', l:pad) . ' │')
+        call add(l:result, '┃ ' . l:line . repeat(' ', l:pad) . ' ┃')
     endfor
     " Bottom border
-    call add(l:result, '└' . repeat('─', l:maxw + 2) . '┘')
+    call add(l:result, '┗' . repeat('━', l:maxw + 2) . '┛')
     return l:result
 endfunction
 
@@ -357,7 +357,7 @@ function! s:OpenTable(name, head) abort
     call s:SetBufferContent(l:lines)
     call s:SetTableKeybindings()
     setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
+    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
     call s:ApplyVimeColors()
 endfunction
 
@@ -471,8 +471,13 @@ function! s:DoPlot(col1, col2, plot_type, ...) abort
 
     call s:SetBufferContent(l:lines)
     call s:SetPlotKeybindings()
-    setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ,b\ Back\ to\ table\ \ │\ \ ,q\ Close%=
+    let b:vime_prev_laststatus = &laststatus
+    setlocal statusline=
+    let &laststatus = 0
+    augroup vime_plot_statusline
+        autocmd! * <buffer>
+        autocmd BufWinLeave,BufWipeout <buffer> let &laststatus = get(b:, 'vime_prev_laststatus', 2)
+    augroup END
     call s:ApplyVimeColors()
 
     if win_gotoid(l:orig_winid)

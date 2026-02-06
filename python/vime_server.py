@@ -115,7 +115,7 @@ class VimeServer:
         content = tabulate(
             display_df,
             headers="keys",
-            tablefmt="heavy_grid",
+            tablefmt="plain",
             showindex=False,
             stralign="left",
             numalign="left",
@@ -211,8 +211,15 @@ class VimeServer:
             lines.append("")
             lines.append("Numeric Summary:")
             desc = df[numeric_cols].describe().T
-            lines.append(tabulate(desc, headers="keys", tablefmt="heavy_grid",
-                                  stralign="left", numalign="left"))
+            lines.append(
+                tabulate(
+                    desc,
+                    headers="keys",
+                    tablefmt="plain",
+                    stralign="left",
+                    numalign="left",
+                )
+            )
 
         return {"ok": True, "content": "\n".join(lines)}
 
