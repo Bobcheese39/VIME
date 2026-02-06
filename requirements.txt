@@ -1,0 +1,5 @@
+h5py
+pandas
+numpy
+tabulate
+tables

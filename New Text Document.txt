@@ -1,0 +1,25 @@
+simple but robust app to read h5 files with vim
+
+vim keybinds call a python script to do certain actions
+vim h5 file, opens list of available tables
+vim a table, prints it to screen (tabulate)
+
+features:
+- opens a python kernel in the background 
+- trigger commands that are run in the kernel using vim keybinds 
+- very fast loading
+- ASCII plotting w/ curses
+
+
+Help me create a simple but robust application to read h5 files using vim.
+ Essentially, vim keybinds call a python script to do certain actions and print tables to the screen.
+  This way, loading is very fast. Some features I want to have include:
+- opening a python kernel in the background, for a persistent python environment for data manipulation. 
+This way data only needs to be loaded in once.
+- simple TUI 
+- the ability to plot data from the table in the terminal with ASCII. ideally, the use case would be something like ',plt $1 $3' -> sent to python backend for processing -> sent back to VIM and opened in new buffer.
+- plots and tables open in new buffers
+
+The script will only be run on linux.
+Vim as the front end. I wouldn't mind using curses for a more aesthetic TUI, if possible, but its important that VIM is the frontend. 
+python server as the backend
