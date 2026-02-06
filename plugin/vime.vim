@@ -365,6 +365,7 @@ function! s:SetTableKeybindings() abort
     nnoremap <buffer> <silent> ,p :call <SID>TablePlotPrompt()<CR>
     nnoremap <buffer> <silent> ,pv :call <SID>TablePlotPrompt('v')<CR>
     nnoremap <buffer> <silent> ,ph :call <SID>TablePlotPrompt('h')<CR>
+    nnoremap <buffer> <silent> ,pq :call <SID>ClosePlotBuffers()<CR>
     nnoremap <buffer> <silent> ,b :call <SID>BackToList()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
     nnoremap <buffer> <silent> ,h :call <SID>TableHead()<CR>
@@ -548,6 +549,23 @@ function! s:CloseBuf() abort
         call s:VimeQuit()
     else
         bwipeout
+    endif
+endfunction
+
+function! s:ClosePlotBuffers() abort
+    " Close any open plot buffers without leaving the table
+    let l:closed = 0
+    for l:buf in getbufinfo()
+        if getbufvar(l:buf.bufnr, 'vime_type', '') ==# 'plot'
+            try
+                execute 'bwipeout ' . l:buf.bufnr
+                let l:closed = 1
+            catch
+            endtry
+        endif
+    endfor
+    if !l:closed
+        echo 'VIME: No plot buffer to close'
     endif
 endfunction
 
