@@ -357,7 +357,7 @@ function! s:OpenTable(name, head) abort
     call s:SetBufferContent(l:lines)
     call s:SetTableKeybindings()
     setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
+    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
     call s:ApplyVimeColors()
 endfunction
 
