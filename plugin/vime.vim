@@ -6,6 +6,8 @@
 "        :VimePlot <col1> <col2> [type]  -> plot columns
 "        :VimeInfo          -> info about current table
 
+scriptencoding utf-8
+
 if exists('g:loaded_vime')
     finish
 endif
@@ -124,6 +126,84 @@ function! s:SetBufferContent(lines) abort
     normal! gg
 endfunction
 
+function! s:WrapWithBorder(lines) abort
+    " Calculate maximum display width across all content lines
+    let l:maxw = 0
+    for l:line in a:lines
+        let l:w = strdisplaywidth(l:line)
+        if l:w > l:maxw
+            let l:maxw = l:w
+        endif
+    endfor
+    let l:maxw = max([l:maxw, 40])
+
+    let l:result = []
+    " Top border
+    call add(l:result, '┌' . repeat('─', l:maxw + 2) . '┐')
+    " Wrap each content line
+    for l:line in a:lines
+        let l:pad = l:maxw - strdisplaywidth(l:line)
+        call add(l:result, '│ ' . l:line . repeat(' ', l:pad) . ' │')
+    endfor
+    " Bottom border
+    call add(l:result, '└' . repeat('─', l:maxw + 2) . '┘')
+    return l:result
+endfunction
+
+" ======================================================================
+" Nord color theme
+" ======================================================================
+
+function! s:DefineVimeHighlights() abort
+    highlight VimeNormal     guifg=#D8DEE9 guibg=#2E3440 ctermfg=253 ctermbg=236
+    highlight VimeHeader     guifg=#2E3440 guibg=#81A1C1 ctermfg=236 ctermbg=109 gui=bold cterm=bold
+    highlight VimeBorder     guifg=#4C566A guibg=NONE    ctermfg=60  ctermbg=NONE
+    highlight VimeTableName  guifg=#88C0D0 guibg=NONE    ctermfg=110 ctermbg=NONE
+    highlight VimeTableDims  guifg=#4C566A guibg=NONE    ctermfg=60  ctermbg=NONE
+    highlight VimePlotAxis   guifg=#81A1C1 guibg=NONE    ctermfg=109 ctermbg=NONE
+    highlight VimePlotData   guifg=#A3BE8C guibg=NONE    ctermfg=144 ctermbg=NONE
+    highlight VimeFooter     guifg=#D8DEE9 guibg=#3B4252 ctermfg=253 ctermbg=238 gui=bold cterm=bold
+    highlight VimeTitle      guifg=#EBCB8B guibg=NONE    ctermfg=222 ctermbg=NONE
+    highlight VimeMuted      guifg=#616E88 guibg=NONE    ctermfg=60  ctermbg=NONE
+    highlight VimeGridLine   guifg=#4C566A guibg=NONE    ctermfg=60  ctermbg=NONE
+endfunction
+
+function! s:ApplyVimeColors() abort
+    " Set buffer-local window highlight if supported
+    if exists('+winhighlight')
+        setlocal winhighlight=Normal:VimeNormal
+    endif
+
+    syntax clear
+    " Border characters (outer frame)
+    syntax match VimeBorder /^[┌└][─]*[┐┘]$/
+    syntax match VimeBorder /^│/
+    syntax match VimeBorder /│$/
+
+    " Header bar (solid color, entire line)
+    syntax match VimeHeader /^│\? *VIME - .*$/
+
+    " Table names (paths starting with /)
+    syntax match VimeTableName /\/\S\+/
+
+    " Dimensions
+    syntax match VimeTableDims /(\S\+ rows x \S\+ cols)/
+
+    " Section titles
+    syntax match VimeTitle /\<Tables:\>/
+    syntax match VimeTitle /\<Table:\>/
+    syntax match VimeTitle /\<Columns:\>/
+    syntax match VimeTitle /\<Shape:\>/
+    syntax match VimeTitle /\<Numeric Summary:\>/
+    syntax match VimeTitle /^│\? *Plot:.*$/
+
+    " Braille plot data (U+2801 through U+28FF)
+    syntax match VimePlotData /[⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿⡀⡁⡂⡃⡄⡅⡆⡇⡈⡉⡊⡋⡌⡍⡎⡏⡐⡑⡒⡓⡔⡕⡖⡗⡘⡙⡚⡛⡜⡝⡞⡟⡠⡡⡢⡣⡤⡥⡦⡧⡨⡩⡪⡫⡬⡭⡮⡯⡰⡱⡲⡳⡴⡵⡶⡷⡸⡹⡺⡻⡼⡽⡾⡿⢀⢁⢂⢃⢄⢅⢆⢇⢈⢉⢊⢋⢌⢍⢎⢏⢐⢑⢒⢓⢔⢕⢖⢗⢘⢙⢚⢛⢜⢝⢞⢟⢠⢡⢢⢣⢤⢥⢦⢧⢨⢩⢪⢫⢬⢭⢮⢯⢰⢱⢲⢳⢴⢵⢶⢷⢸⢹⢺⢻⢼⢽⢾⢿⣀⣁⣂⣃⣄⣅⣆⣇⣈⣉⣊⣋⣌⣍⣎⣏⣐⣑⣒⣓⣔⣕⣖⣗⣘⣙⣚⣛⣜⣝⣞⣟⣠⣡⣢⣣⣤⣥⣦⣧⣨⣩⣪⣫⣬⣭⣮⣯⣰⣱⣲⣳⣴⣵⣶⣷⣸⣹⣺⣻⣼⣽⣾⣿]/
+
+    " Table grid lines (heavy box-drawing from tabulate heavy_grid)
+    syntax match VimeGridLine /[┏┓┗┛┣┫┳┻╋━┃]/
+endfunction
+
 " ======================================================================
 " Table list buffer
 " ======================================================================
@@ -146,8 +226,11 @@ function! s:OpenTableList(filepath) abort
 
     " Build display lines
     let l:lines = []
-    call add(l:lines, ' VIME - ' . fnamemodify(a:filepath, ':t'))
-    call add(l:lines, ' ' . repeat('=', 60))
+    let l:header = 'VIME - ' . fnamemodify(a:filepath, ':t')
+    " Pad header to window width so the solid highlight fills the bar
+    let l:padwidth = max([60, winwidth(0) - 4])
+    let l:header .= repeat(' ', max([0, l:padwidth - strdisplaywidth(l:header)]))
+    call add(l:lines, l:header)
     call add(l:lines, '')
     call add(l:lines, ' Tables:')
     call add(l:lines, '')
@@ -160,18 +243,17 @@ function! s:OpenTableList(filepath) abort
         let l:cols = l:tbl['cols']
         let l:display = printf('   %-40s (%s rows x %s cols)', l:name, l:rows, l:cols)
         call add(l:lines, l:display)
-        " Map line number to table name (lines are 1-indexed, header takes 5 lines)
+        " Map line number to table name (1-indexed; 1 border + 4 header lines = offset 6)
         let b:vime_table_map[l:idx + 6] = l:name
         let l:idx += 1
     endfor
 
-    call add(l:lines, '')
-    call add(l:lines, ' Keybindings:')
-    call add(l:lines, '   <Enter>  Open table    ,i  Table info')
-    call add(l:lines, '   ,r       Refresh        ,q  Quit VIME')
-
+    let l:lines = s:WrapWithBorder(l:lines)
     call s:SetBufferContent(l:lines)
     call s:SetListKeybindings()
+    setlocal laststatus=2
+    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,q\ Quit%=
+    call s:ApplyVimeColors()
 endfunction
 
 function! s:SetListKeybindings() abort
@@ -236,16 +318,13 @@ function! s:OpenTable(name, head) abort
     let b:vime_columns = get(l:resp, 'columns', [])
 
     let l:lines = split(l:resp['content'], "\n")
-
-    " Add keybinding hints
-    call add(l:lines, '')
-    call add(l:lines, ' Keybindings:')
-    call add(l:lines, '   :VimePlot <col1> <col2> [scatter]  - Plot columns')
-    call add(l:lines, '   ,p  Plot prompt    ,b  Back to list    ,q  Close')
-    call add(l:lines, '   ,h  Change row limit    ,a  Show all rows')
+    let l:lines = s:WrapWithBorder(l:lines)
 
     call s:SetBufferContent(l:lines)
     call s:SetTableKeybindings()
+    setlocal laststatus=2
+    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
+    call s:ApplyVimeColors()
 endfunction
 
 function! s:SetTableKeybindings() abort
@@ -329,11 +408,13 @@ function! s:DoPlot(col1, col2, plot_type) abort
 
     call s:CreateScratchBuffer('VIME:plot', 'plot')
     let l:lines = split(l:resp['content'], "\n")
-    call add(l:lines, '')
-    call add(l:lines, ' Keybindings:  ,b  Back to table    ,q  Close')
+    let l:lines = s:WrapWithBorder(l:lines)
 
     call s:SetBufferContent(l:lines)
     call s:SetPlotKeybindings()
+    setlocal laststatus=2
+    setlocal statusline=%#VimeFooter#\ \ ,b\ Back\ to\ table\ \ │\ \ ,q\ Close%=
+    call s:ApplyVimeColors()
 endfunction
 
 function! s:SetPlotKeybindings() abort
@@ -355,12 +436,14 @@ function! s:ShowInfo(name) abort
 
     call s:CreateScratchBuffer('VIME:info:' . a:name, 'info')
     let l:lines = split(l:resp['content'], "\n")
-    call add(l:lines, '')
-    call add(l:lines, ' Keybindings:  ,b  Back    ,q  Close')
+    let l:lines = s:WrapWithBorder(l:lines)
 
     call s:SetBufferContent(l:lines)
     nnoremap <buffer> <silent> ,b :call <SID>BackToList()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
+    setlocal laststatus=2
+    setlocal statusline=%#VimeFooter#\ \ ,b\ Back\ \ │\ \ ,q\ Close%=
+    call s:ApplyVimeColors()
 endfunction
 
 " ======================================================================
@@ -438,6 +521,9 @@ function! s:VimeInfoCmd() abort
         echo 'VIME: No table loaded in this buffer'
     endif
 endfunction
+
+" Initialize Nord highlight groups
+call s:DefineVimeHighlights()
 
 " ======================================================================
 " Autocommand - intercept opening .h5 / .hdf5 files

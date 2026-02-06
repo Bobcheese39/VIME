@@ -101,7 +101,7 @@ class VimeServer:
         content = tabulate(
             display_df,
             headers="keys",
-            tablefmt="grid",
+            tablefmt="heavy_grid",
             showindex=False,
             stralign="left",
             numalign="left",
@@ -122,7 +122,7 @@ class VimeServer:
         }
 
     def cmd_plot(self, payload):
-        """Generate an ASCII plot from the current table."""
+        """Generate a braille Unicode plot from the current table."""
         if self.current_df is None:
             return {"ok": False, "error": "No table loaded. Open a table first."}
 
@@ -153,9 +153,9 @@ class VimeServer:
         if len(x) == 0:
             return {"ok": False, "error": "No valid data points to plot"}
 
-        plot_lines = ascii_plot(x, y, width=width, height=height,
-                                x_label=str(x_col), y_label=str(y_col),
-                                plot_type=plot_type)
+        plot_lines = braille_plot(x, y, width=width, height=height,
+                                  x_label=str(x_col), y_label=str(y_col),
+                                  plot_type=plot_type)
         title = f"Plot: {x_col} vs {y_col}  ({self.current_table})"
         content = title + "\n\n" + "\n".join(plot_lines)
         return {"ok": True, "content": content}
@@ -176,12 +176,12 @@ class VimeServer:
         lines.append(f"Shape: {df.shape[0]} rows x {df.shape[1]} columns")
         lines.append("")
         lines.append("Columns:")
-        lines.append("-" * 50)
+        lines.append("─" * 50)
         for i, col in enumerate(df.columns):
             dtype = df[col].dtype
             non_null = df[col].count()
             lines.append(f"  {i:>3}  {col:<30} {str(dtype):<12} ({non_null} non-null)")
-        lines.append("-" * 50)
+        lines.append("─" * 50)
 
         # Numeric summary
         numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -189,7 +189,7 @@ class VimeServer:
             lines.append("")
             lines.append("Numeric Summary:")
             desc = df[numeric_cols].describe().T
-            lines.append(tabulate(desc, headers="keys", tablefmt="grid",
+            lines.append(tabulate(desc, headers="keys", tablefmt="heavy_grid",
                                   stralign="left", numalign="left"))
 
         return {"ok": True, "content": "\n".join(lines)}
@@ -248,27 +248,95 @@ class VimeServer:
 
 
 # ======================================================================
-# ASCII Plotter
+# Braille Plotter
 # ======================================================================
 
-def ascii_plot(x, y, width=72, height=20, x_label="x", y_label="y",
-               plot_type="line"):
+# Braille dot bit positions for sub-pixel (dx, dy) within a character cell.
+# Each braille character is a 2-wide x 4-tall grid of dots.
+# Character = chr(0x2800 + bitmask)
+BRAILLE_MAP = [
+    [0x01, 0x02, 0x04, 0x40],  # left column  (dx=0), rows 0-3
+    [0x08, 0x10, 0x20, 0x80],  # right column (dx=1), rows 0-3
+]
+
+
+class BrailleCanvas:
+    """A canvas that renders using braille Unicode characters (U+2800-U+28FF).
+
+    Each character cell encodes a 2x4 sub-pixel grid, giving 2x horizontal
+    and 4x vertical resolution compared to regular character plotting.
     """
-    Generate an ASCII plot of x vs y data.
+
+    def __init__(self, width, height):
+        """
+        Args:
+            width:  canvas width in character cells
+            height: canvas height in character cells
+        """
+        self.char_width = width
+        self.char_height = height
+        self.pixel_width = width * 2
+        self.pixel_height = height * 4
+        self._cells = [[0] * width for _ in range(height)]
+
+    def set_pixel(self, px, py):
+        """Set a sub-pixel at coordinates (px, py)."""
+        if px < 0 or px >= self.pixel_width or py < 0 or py >= self.pixel_height:
+            return
+        cx = px // 2
+        cy = py // 4
+        dx = px % 2
+        dy = py % 4
+        self._cells[cy][cx] |= BRAILLE_MAP[dx][dy]
+
+    def line(self, x0, y0, x1, y1):
+        """Draw a line using Bresenham's algorithm on the sub-pixel grid."""
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+
+        while True:
+            self.set_pixel(x0, y0)
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
+
+    def render(self):
+        """Return list of strings (one per character row)."""
+        lines = []
+        for row in self._cells:
+            lines.append("".join(chr(0x2800 + cell) for cell in row))
+        return lines
+
+
+def braille_plot(x, y, width=72, height=20, x_label="x", y_label="y",
+                 plot_type="line"):
+    """
+    Generate a braille Unicode plot of x vs y data.
+
+    Each character cell uses a 2x4 braille dot grid, giving much higher
+    effective resolution than traditional ASCII plotting.
 
     Args:
         x, y: numpy arrays of data
-        width: plot area width in characters
-        height: plot area height in characters
+        width: total width in characters (including y-axis labels)
+        height: plot area height in character cells
         x_label, y_label: axis labels
         plot_type: "line" or "scatter"
 
     Returns:
         List of strings (lines of the plot)
     """
-    # Reserve space for y-axis labels
     y_axis_width = 10
-    plot_width = width - y_axis_width - 1  # -1 for the axis line
+    plot_width = width - y_axis_width - 1
     plot_height = height
 
     if plot_width < 10 or plot_height < 5:
@@ -290,18 +358,18 @@ def ascii_plot(x, y, width=72, height=20, x_label="x", y_label="y",
     y_range = y_max - y_min
     y_min -= y_range * 0.05
     y_max += y_range * 0.05
-    x_range = x_max - x_min
 
-    # Create the grid (row 0 = top = y_max, row -1 = bottom = y_min)
-    grid = [[" " for _ in range(plot_width)] for _ in range(plot_height)]
+    # Create braille canvas
+    canvas = BrailleCanvas(plot_width, plot_height)
+    pw = canvas.pixel_width - 1
+    ph = canvas.pixel_height - 1
 
-    # Map data to grid coordinates
-    def to_grid(xv, yv):
-        gx = int(round((xv - x_min) / (x_max - x_min) * (plot_width - 1)))
-        gy = int(round((1.0 - (yv - y_min) / (y_max - y_min)) * (plot_height - 1)))
-        gx = max(0, min(plot_width - 1, gx))
-        gy = max(0, min(plot_height - 1, gy))
-        return gx, gy
+    def to_pixel(xv, yv):
+        px = int(round((xv - x_min) / (x_max - x_min) * pw))
+        py = int(round((1.0 - (yv - y_min) / (y_max - y_min)) * ph))
+        px = max(0, min(pw, px))
+        py = max(0, min(ph, py))
+        return px, py
 
     if plot_type == "line":
         # Sort by x for line drawing
@@ -309,23 +377,24 @@ def ascii_plot(x, y, width=72, height=20, x_label="x", y_label="y",
         xs, ys = x[order], y[order]
 
         for i in range(len(xs)):
-            gx, gy = to_grid(xs[i], ys[i])
-            grid[gy][gx] = "*"
+            px, py = to_pixel(xs[i], ys[i])
+            canvas.set_pixel(px, py)
 
-            # Draw line segments between consecutive points using Bresenham
+            # Draw line segments between consecutive points
             if i > 0:
-                gx0, gy0 = to_grid(xs[i - 1], ys[i - 1])
-                _bresenham(grid, gx0, gy0, gx, gy)
+                px0, py0 = to_pixel(xs[i - 1], ys[i - 1])
+                canvas.line(px0, py0, px, py)
     else:
         # Scatter plot
         for i in range(len(x)):
-            gx, gy = to_grid(x[i], y[i])
-            grid[gy][gx] = "*"
+            px, py = to_pixel(x[i], y[i])
+            canvas.set_pixel(px, py)
 
-    # Build output lines
+    # Render the canvas
+    braille_lines = canvas.render()
+
+    # Build output with y-axis labels
     lines = []
-
-    # Y-axis tick values (top, middle, bottom)
     y_ticks = [y_max, (y_max + y_min) / 2, y_min]
     y_tick_rows = [0, plot_height // 2, plot_height - 1]
     tick_map = dict(zip(y_tick_rows, y_ticks))
@@ -333,21 +402,19 @@ def ascii_plot(x, y, width=72, height=20, x_label="x", y_label="y",
     for row in range(plot_height):
         if row in tick_map:
             label = _format_num(tick_map[row], y_axis_width - 2)
-            prefix = f"{label:>{y_axis_width - 1}} |"
+            prefix = f"{label:>{y_axis_width - 1}} ┤"
         else:
-            prefix = " " * (y_axis_width - 1) + " |"
-        lines.append(prefix + "".join(grid[row]))
+            prefix = " " * (y_axis_width - 1) + " │"
+        lines.append(prefix + braille_lines[row])
 
-    # X-axis line
-    lines.append(" " * (y_axis_width - 1) + " +" + "-" * plot_width)
+    # X-axis line with Unicode corner
+    lines.append(" " * (y_axis_width - 1) + " └" + "─" * plot_width)
 
     # X-axis tick labels
-    x_tick_line = " " * y_axis_width
     left_label = _format_num(x_min, 8)
     mid_label = _format_num((x_min + x_max) / 2, 8)
     right_label = _format_num(x_max, 8)
 
-    # Place labels at positions
     tick_str = list(" " * plot_width)
     _place_label(tick_str, 0, left_label)
     _place_label(tick_str, plot_width // 2 - len(mid_label) // 2, mid_label)
@@ -360,31 +427,6 @@ def ascii_plot(x, y, width=72, height=20, x_label="x", y_label="y",
     lines.append(" " * max(0, center_x) + x_label)
 
     return lines
-
-
-def _bresenham(grid, x0, y0, x1, y1):
-    """Draw a line on the grid using Bresenham's algorithm."""
-    dx = abs(x1 - x0)
-    dy = abs(y1 - y0)
-    sx = 1 if x0 < x1 else -1
-    sy = 1 if y0 < y1 else -1
-    err = dx - dy
-    rows = len(grid)
-    cols = len(grid[0]) if rows > 0 else 0
-
-    while True:
-        if 0 <= y0 < rows and 0 <= x0 < cols:
-            if grid[y0][x0] == " ":
-                grid[y0][x0] = "."
-        if x0 == x1 and y0 == y1:
-            break
-        e2 = 2 * err
-        if e2 > -dy:
-            err -= dy
-            x0 += sx
-        if e2 < dx:
-            err += dx
-            y0 += sy
 
 
 def _format_num(val, max_width):
