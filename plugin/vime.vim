@@ -105,9 +105,18 @@ endfunction
 " Buffer helpers
 " ======================================================================
 
-function! s:CreateScratchBuffer(name, type) abort
-    " Open a new scratch buffer in a vertical split
-    execute 'enew'
+function! s:CreateScratchBuffer(name, type, ...) abort
+    " Open a new scratch buffer, optionally in a split.
+    " Optional arg: 'v' for vertical split, 'h' for horizontal split,
+    "               '' or omitted for replacing the current buffer.
+    let l:split = a:0 >= 1 ? a:1 : ''
+    if l:split ==# 'v'
+        execute 'vnew'
+    elseif l:split ==# 'h'
+        execute 'new'
+    else
+        execute 'enew'
+    endif
     setlocal buftype=nofile
     setlocal bufhidden=wipe
     setlocal noswapfile
@@ -216,7 +225,11 @@ function! s:OpenTableList(filepath) abort
     let s:current_file = a:filepath
     let l:resp = s:Send({'cmd': 'open', 'file': a:filepath})
 
-    if type(l:resp) != v:t_dict || !get(l:resp, 'ok', 0)
+    if type(l:resp) != v:t_dict
+        echoerr 'VIME: Failed to open file (server returned unexpected response)'
+        return
+    endif
+    if !get(l:resp, 'ok', 0)
         echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to open file')
         return
     endif
@@ -308,7 +321,11 @@ endfunction
 function! s:OpenTable(name, head) abort
     let l:resp = s:Send({'cmd': 'table', 'name': a:name, 'head': a:head})
 
-    if type(l:resp) != v:t_dict || !get(l:resp, 'ok', 0)
+    if type(l:resp) != v:t_dict
+        echoerr 'VIME: Failed to read table (server returned unexpected response)'
+        return
+    endif
+    if !get(l:resp, 'ok', 0)
         echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to read table')
         return
     endif
@@ -323,12 +340,14 @@ function! s:OpenTable(name, head) abort
     call s:SetBufferContent(l:lines)
     call s:SetTableKeybindings()
     setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
+    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
     call s:ApplyVimeColors()
 endfunction
 
 function! s:SetTableKeybindings() abort
     nnoremap <buffer> <silent> ,p :call <SID>TablePlotPrompt()<CR>
+    nnoremap <buffer> <silent> ,pv :call <SID>TablePlotPrompt('v')<CR>
+    nnoremap <buffer> <silent> ,ph :call <SID>TablePlotPrompt('h')<CR>
     nnoremap <buffer> <silent> ,b :call <SID>BackToList()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
     nnoremap <buffer> <silent> ,h :call <SID>TableHead()<CR>
@@ -336,7 +355,10 @@ function! s:SetTableKeybindings() abort
     nnoremap <buffer> <silent> ,i :call <SID>TableInfoCurrent()<CR>
 endfunction
 
-function! s:TablePlotPrompt() abort
+function! s:TablePlotPrompt(...) abort
+    " Optional arg: split direction ('v', 'h', or '' for no split)
+    let l:split = a:0 >= 1 ? a:1 : ''
+
     let l:cols_str = ''
     if exists('b:vime_columns') && len(b:vime_columns) > 0
         let l:cols_str = '  Columns: '
@@ -359,7 +381,7 @@ function! s:TablePlotPrompt() abort
     let l:col1 = l:parts[0]
     let l:col2 = l:parts[1]
     let l:ptype = len(l:parts) >= 3 ? l:parts[2] : 'line'
-    call s:DoPlot(l:col1, l:col2, l:ptype)
+    call s:DoPlot(l:col1, l:col2, l:ptype, l:split)
 endfunction
 
 function! s:TableHead() abort
@@ -390,23 +412,40 @@ endfunction
 " Plot buffer
 " ======================================================================
 
-function! s:DoPlot(col1, col2, plot_type) abort
+function! s:DoPlot(col1, col2, plot_type, ...) abort
+    " Optional arg: split direction ('v', 'h', or '' for no split)
+    let l:split = a:0 >= 1 ? a:1 : ''
+
     " Try to convert to integers if they look numeric
     let l:c1 = a:col1 =~# '^\d\+$' ? str2nr(a:col1) : a:col1
     let l:c2 = a:col2 =~# '^\d\+$' ? str2nr(a:col2) : a:col2
+
+    " Create the buffer first so we can measure the window size
+    call s:CreateScratchBuffer('VIME:plot', 'plot', l:split)
+
+    " Measure the new window and compute plot dimensions
+    " Border wrapping adds 4 chars width (│ + │) and 2 lines (top + bottom)
+    " Plot content adds: 2 title lines + 4 axis lines = 6 extra lines
+    let l:plot_width = max([20, winwidth(0) - 4])
+    let l:plot_height = max([5, winheight(0) - 8])
 
     let l:resp = s:Send({
         \ 'cmd': 'plot',
         \ 'cols': [l:c1, l:c2],
         \ 'type': a:plot_type,
+        \ 'width': l:plot_width,
+        \ 'height': l:plot_height,
         \ })
 
-    if type(l:resp) != v:t_dict || !get(l:resp, 'ok', 0)
+    if type(l:resp) != v:t_dict
+        echoerr 'VIME: Failed to generate plot (server returned unexpected response)'
+        return
+    endif
+    if !get(l:resp, 'ok', 0)
         echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to generate plot')
         return
     endif
 
-    call s:CreateScratchBuffer('VIME:plot', 'plot')
     let l:lines = split(l:resp['content'], "\n")
     let l:lines = s:WrapWithBorder(l:lines)
 
@@ -429,7 +468,11 @@ endfunction
 function! s:ShowInfo(name) abort
     let l:resp = s:Send({'cmd': 'info', 'name': a:name})
 
-    if type(l:resp) != v:t_dict || !get(l:resp, 'ok', 0)
+    if type(l:resp) != v:t_dict
+        echoerr 'VIME: Failed to get info (server returned unexpected response)'
+        return
+    endif
+    if !get(l:resp, 'ok', 0)
         echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to get info')
         return
     endif

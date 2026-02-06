@@ -11,7 +11,7 @@ Keeps HDF5 data in memory so files only need to be loaded once.
 import sys
 import json
 import os
-from .plotter import braille_plot
+from plotter import braille_plot
 import numpy as np
 import pandas as pd
 from tabulate import tabulate
