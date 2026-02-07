@@ -30,6 +30,8 @@ let s:server_script = s:script_dir . '/python/vime_server.py'
 let s:job = v:null
 let s:channel = v:null
 let s:current_file = ''
+let s:compute_timer = -1
+let s:list_bufnr = -1
 
 " ======================================================================
 " Job / Channel management
@@ -282,7 +284,9 @@ function! s:OpenTableList(filepath) abort
     call s:SetBufferContent(l:lines)
     call s:SetListKeybindings()
     setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,q\ Quit%=
+    let b:vime_status = ''
+    let s:list_bufnr = bufnr('%')
+    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,c\ Compute\ \ │\ \ ,q\ Quit%=%{get(b:,'vime_status','')}
     call s:ApplyVimeColors()
 endfunction
 
@@ -290,6 +294,7 @@ function! s:SetListKeybindings() abort
     nnoremap <buffer> <silent> <CR> :call <SID>ListSelectTable()<CR>
     nnoremap <buffer> <silent> ,i :call <SID>ListTableInfo()<CR>
     nnoremap <buffer> <silent> ,r :call <SID>ListRefresh()<CR>
+    nnoremap <buffer> <silent> ,c :call <SID>ListComputeStart()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>VimeQuit()<CR>
 endfunction
 
@@ -328,6 +333,67 @@ endfunction
 function! s:ListRefresh() abort
     if s:current_file !=# ''
         call s:OpenTableList(s:current_file)
+    endif
+endfunction
+
+function! s:SetListStatus(msg) abort
+    if s:list_bufnr > 0 && bufexists(s:list_bufnr)
+        call setbufvar(s:list_bufnr, 'vime_status', a:msg)
+    endif
+    redrawstatus
+endfunction
+
+function! s:StopComputeTimer() abort
+    if s:compute_timer != -1
+        call timer_stop(s:compute_timer)
+        let s:compute_timer = -1
+    endif
+endfunction
+
+function! s:ListComputeStart() abort
+    if s:current_file ==# ''
+        echo 'VIME: No file open'
+        return
+    endif
+    let l:resp = s:Send({'cmd': 'compute_start'})
+    if type(l:resp) != v:t_dict
+        echoerr 'VIME: Failed to start compute (server returned unexpected response)'
+        return
+    endif
+    if !get(l:resp, 'ok', 0)
+        call s:SetListStatus(get(l:resp, 'error', 'Compute already running'))
+        return
+    endif
+    call s:SetListStatus(get(l:resp, 'message', 'Computing...'))
+    call s:StopComputeTimer()
+    let s:compute_timer = timer_start(1000, function('s:ComputePoll'), {'repeat': -1})
+endfunction
+
+function! s:ComputePoll(timer_id) abort
+    let l:resp = s:Send({'cmd': 'compute_status'})
+    if type(l:resp) != v:t_dict || !get(l:resp, 'ok', 0)
+        call s:SetListStatus('Compute status error')
+        call s:StopComputeTimer()
+        return
+    endif
+    let l:status = get(l:resp, 'status', '')
+    if l:status ==# 'running'
+        call s:SetListStatus(get(l:resp, 'message', 'Computing...'))
+        return
+    endif
+    if l:status ==# 'done'
+        let l:name = get(l:resp, 'table', '')
+        call s:StopComputeTimer()
+        call s:OpenTableList(s:current_file)
+        let l:msg = l:name ==# '' ? 'Compute done' : ('Compute done: ' . l:name)
+        call s:SetListStatus(l:msg)
+        return
+    endif
+    if l:status ==# 'error'
+        let l:err = get(l:resp, 'error', 'Compute failed')
+        call s:SetListStatus('Compute failed: ' . l:err)
+        call s:StopComputeTimer()
+        return
     endif
 endfunction
 

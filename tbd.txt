@@ -1,0 +1,5 @@
+- create test script that simulates computationally intensive calculations, and freezes the kernel.
+- use tqdm or another progress bar to update the status bar?
+- wait 30 seconds, then return complete
+- once ready, update the status bar.
+- table needs to be loaded in one instance, additional processing in another. can't freeze up the terminal. 

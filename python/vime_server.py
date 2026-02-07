@@ -11,10 +11,13 @@ Keeps HDF5 data in memory so files only need to be loaded once.
 import sys
 import json
 import os
+import threading
+import time
 from plotter import braille_plot
 import numpy as np
 from tabulate import tabulate
 from data_loader import DataLoader
+from test_compute import test_compute
 
 
 
@@ -40,6 +43,12 @@ class VimeServer:
         self.loader = DataLoader()
         self.current_df = None     # Last-fetched DataFrame
         self.current_table = None  # Name of the last-fetched table
+        self.virtual_tables = {}   # Virtual tables created by compute jobs
+        self.compute_thread = None
+        self.compute_state = "idle"
+        self.compute_message = ""
+        self.compute_table_name = None
+        self.compute_error = None
 
     # ------------------------------------------------------------------
     # Command dispatch
@@ -55,6 +64,8 @@ class VimeServer:
             "plot": self.cmd_plot,
             "info": self.cmd_info,
             "close": self.cmd_close,
+            "compute_start": self.cmd_compute_start,
+            "compute_status": self.cmd_compute_status,
         }
         handler = handlers.get(cmd)
         if handler is None:
@@ -228,6 +239,32 @@ class VimeServer:
         self._close_handles()
         sys.exit(0)
 
+    def cmd_compute_start(self, _payload):
+        """Start a background compute job using test_compute()."""
+        if self.compute_thread is not None and self.compute_thread.is_alive():
+            return {"ok": False, "error": "Compute already running", "status": "running"}
+
+        self.compute_state = "running"
+        self.compute_message = "Computing..."
+        self.compute_table_name = None
+        self.compute_error = None
+
+        self.compute_thread = threading.Thread(
+            target=self._run_compute_job, name="vime-compute", daemon=True
+        )
+        self.compute_thread.start()
+        return {"ok": True, "status": self.compute_state, "message": self.compute_message}
+
+    def cmd_compute_status(self, _payload):
+        """Return the current compute job status."""
+        return {
+            "ok": True,
+            "status": self.compute_state,
+            "message": self.compute_message,
+            "table": self.compute_table_name,
+            "error": self.compute_error,
+        }
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -238,11 +275,53 @@ class VimeServer:
         Returns:
             DataFrame if successful, None if not found.
         """
+        if name in self.virtual_tables:
+            return self.virtual_tables[name]["df"]
         return self.loader.load_table(name)
 
     def _get_table_list(self):
         """Return a list of dicts with table metadata."""
-        return self.loader.list_tables()
+        tables = list(self.loader.list_tables())
+        if self.virtual_tables:
+            tables.extend(
+                {
+                    "name": entry["name"],
+                    "rows": entry["rows"],
+                    "cols": entry["cols"],
+                }
+                for entry in self.virtual_tables.values()
+            )
+        return tables
+
+    def _new_compute_name(self):
+        base = "/__computed__/compute"
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        name = f"{base}_{stamp}"
+        if name not in self.virtual_tables:
+            return name
+        suffix = 1
+        while f"{name}_{suffix}" in self.virtual_tables:
+            suffix += 1
+        return f"{name}_{suffix}"
+
+    def _run_compute_job(self):
+        try:
+            df = test_compute()
+            name = self._new_compute_name()
+            self.virtual_tables[name] = {
+                "name": name,
+                "df": df,
+                "rows": int(df.shape[0]),
+                "cols": int(df.shape[1]),
+            }
+            self.compute_table_name = name
+            self.compute_state = "done"
+            self.compute_message = f"Compute done: {name}"
+            self.compute_error = None
+        except Exception as exc:
+            self.compute_state = "error"
+            self.compute_message = "Compute failed"
+            self.compute_error = str(exc)
 
     @staticmethod
     def _resolve_column(df, ref):
