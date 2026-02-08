@@ -94,10 +94,10 @@ class VimeServer:
         self.current_table = None
 
         try:
-            tables = self.loader.open(filepath)
+            self.loader.open(filepath)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
-        return {"ok": True, "tables": tables}
+        return {"ok": True, "tables": self._get_table_list()}
 
     def cmd_list(self, _payload):
         """Return the list of tables in the currently open file."""
