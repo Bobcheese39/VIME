@@ -106,6 +106,18 @@ class DataLoader:
             return self._h5py_read_dataset(name)
         return None
 
+    def load_table_fast(self, name):
+        """Load a table/dataset as raw data, skipping pandas DataFrames."""
+        logger.info("Fast loading table: %s (backend=%s)", name, self.backend)
+        if self.backend == "pandas":
+            if name not in self.store:
+                logger.warning("Table not found in pandas store: %s", name)
+                return None
+            return self._pandas_read_table_fast(name)
+        if self.backend == "h5py":
+            return self._h5py_read_dataset_raw(name)
+        return None
+
     def _get_table_list_pandas(self):
         """Return table metadata using the pandas HDFStore backend."""
         tables = []
@@ -144,6 +156,32 @@ class DataLoader:
         logger.info("Collected %d h5py datasets", len(datasets))
         return datasets
 
+    def _pandas_read_table_fast(self, name):
+        """Read table data from pandas-backed HDF5 without DataFrames."""
+        try:
+            storer = self.store.get_storer(name)
+        except Exception as exc:
+            logger.warning("Failed to get pandas storer for %s: %s", name, exc)
+            return None
+
+        table = getattr(storer, "table", None)
+        if table is not None:
+            try:
+                return table.read()
+            except Exception as exc:
+                logger.warning("Failed to read PyTables table for %s: %s", name, exc)
+                return None
+
+        if hasattr(storer, "_read_array"):
+            try:
+                return storer._read_array()
+            except Exception as exc:
+                logger.warning("Failed to read array for %s: %s", name, exc)
+                return None
+
+        logger.warning("Fast read not supported for pandas storer: %s", name)
+        return None
+
     def _h5py_read_dataset(self, name):
         """Read an h5py dataset and return it as a DataFrame."""
         # Strip leading slash for h5py lookup
@@ -178,3 +216,15 @@ class DataLoader:
         # Higher-dimensional: flatten trailing dims
         reshaped = arr.reshape(arr.shape[0], -1)
         return pd.DataFrame(reshaped)
+
+    def _h5py_read_dataset_raw(self, name):
+        """Read an h5py dataset and return raw data without DataFrames."""
+        key = name.lstrip("/")
+        if key not in self.h5file:
+            logger.warning("Dataset not found in h5py file: %s", name)
+            return None
+        ds = self.h5file[key]
+        if not isinstance(ds, h5py.Dataset):
+            logger.warning("H5 object is not a dataset: %s", name)
+            return None
+        return ds[()]

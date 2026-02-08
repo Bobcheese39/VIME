@@ -140,7 +140,16 @@ class VimeServer:
 
         name = payload.get("name", "")
         head = payload.get("head", 100)
-        logger.info("Loading table: %s (head=%s)", name, head)
+        fast = bool(payload.get("fast", True))
+        logger.info("Loading table: %s (head=%s fast=%s)", name, head, fast)
+
+        if fast:
+            data = self.loader.load_table_fast(name)
+            if data is None:
+                logger.warning("Fast table not found or unsupported: %s", name)
+                return {"ok": False, "error": f"Table not found or fast read unsupported: {name}"}
+            content = self._format_fast_table(name, data)
+            return {"ok": True, "content": content, "columns": [], "name": name, "fast": True}
 
         df = self._load_table(name)
         if df is None:
@@ -339,6 +348,23 @@ class VimeServer:
                 for entry in self.virtual_tables.values()
             )
         return tables
+
+    @staticmethod
+    def _format_fast_table(name, data):
+        """Return a fast, raw string representation of table data."""
+        try:
+            shape = getattr(data, "shape", None)
+            shape_info = f"  {shape}" if shape is not None else ""
+            size = int(np.size(data))
+            arr = np.asarray(data)
+            body = np.array2string(
+                arr,
+                threshold=size if size > 0 else 1,
+                max_line_width=200,
+            )
+            return f"{name}{shape_info}  [fast]\n\n{body}"
+        except Exception:
+            return f"{name}  [fast]\n\n{str(data)}"
 
     def _new_compute_name(self):
         base = "/__computed__/compute"
