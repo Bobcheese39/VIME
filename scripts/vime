@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_CMD="${VIME_PYTHON:-python3}"
+HOST="${VIME_HTTP_HOST:-127.0.0.1}"
+PORT="${VIME_HTTP_PORT:-51789}"
+SERVER="${ROOT_DIR}/python/vime_server.py"
+HEALTH_URL="http://${HOST}:${PORT}/health"
+SHUTDOWN_URL="http://${HOST}:${PORT}/shutdown"
+
+STARTED_BY_WRAPPER=0
+
+if ! curl -sS "$HEALTH_URL" >/dev/null 2>&1; then
+  "$PYTHON_CMD" "$SERVER" --host "$HOST" --port "$PORT" >/dev/null 2>&1 &
+  SERVER_PID=$!
+  STARTED_BY_WRAPPER=1
+  for _ in {1..20}; do
+    if curl -sS "$HEALTH_URL" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+fi
+
+vim "$@"
+
+if [ "$STARTED_BY_WRAPPER" -eq 1 ]; then
+  curl -sS -X POST "$SHUTDOWN_URL" >/dev/null 2>&1 || true
+  if kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+    sleep 0.5
+    kill "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
+fi

@@ -1,5 +1,5 @@
 " vime.vim - Vim H5 file viewer plugin
-" Requires Vim 8+ for job/channel support
+" Requires curl and a Vim build with JSON support
 "
 " Usage: vim file.h5   -> opens table list
 "        :VimeOpen <file>   -> open an H5 file
@@ -17,18 +17,13 @@ let g:loaded_vime = 1
 " Configuration
 " ======================================================================
 
-" Path to the python server script (relative to this plugin file)
-let s:script_dir = expand('<sfile>:p:h:h')
-let s:server_script = s:script_dir . '/python/vime_server.py'
-"
-" Optional: override python command for the server.
+" HTTP server configuration.
 " Examples:
-"   let g:vime_python_cmd = ['python', 'C:/path/to/venv/Scripts/python.exe']
-"   let g:vime_python_cmd = 'C:/path/to/venv/Scripts/python.exe'
+"   let g:vime_http_host = '127.0.0.1'
+"   let g:vime_http_port = 51789
+"   let g:vime_curl_cmd = 'curl'
 
 " State
-let s:job = v:null
-let s:channel = v:null
 let s:current_file = ''
 let s:compute_timer = -1
 let s:list_bufnr = -1
@@ -37,100 +32,81 @@ let s:debug_lines = []
 let s:debug_max_lines = 500
 
 " ======================================================================
-" Job / Channel management
+" HTTP request management
 " ======================================================================
 
 function! s:StartServer() abort
-    if s:job isnot v:null && job_status(s:job) ==# 'run'
+    if s:PingServer()
         return 1
     endif
-
-    if !filereadable(s:server_script)
-        echoerr 'VIME: Server script not found: ' . s:server_script
-        return 0
-    endif
-
-    let l:cmd = get(g:, 'vime_python_cmd', ['python3'])
-    if type(l:cmd) == v:t_list
-        if empty(l:cmd)
-            let l:cmd = ['python3']
-        endif
-        if l:cmd[-1] !=# s:server_script
-            call add(l:cmd, s:server_script)
-        endif
-    elseif type(l:cmd) == v:t_string
-        let l:cmd = l:cmd . ' ' . shellescape(s:server_script)
-    else
-        let l:cmd = ['python3', s:server_script]
-    endif
-    let s:job = job_start(l:cmd, {
-        \ 'mode': 'json',
-        \ 'err_mode': 'nl',
-        \ 'err_cb': function('s:OnServerError'),
-        \ 'exit_cb': function('s:OnServerExit'),
-        \ })
-
-    if job_status(s:job) !=# 'run'
-        echoerr 'VIME: Failed to start server'
-        let s:job = v:null
-        return 0
-    endif
-
-    let s:channel = job_getchannel(s:job)
-    return 1
+    echoerr 'VIME: HTTP server not running. Start it with the vime wrapper.'
+    return 0
 endfunction
 
 function! s:StopServer() abort
-    if s:channel isnot v:null
-        try
-            call s:Send({'cmd': 'close'})
-        catch
-        endtry
-    endif
-    if s:job isnot v:null
-        try
-            call job_stop(s:job)
-        catch
-        endtry
-    endif
-    let s:job = v:null
-    let s:channel = v:null
+    try
+        call s:Send({'cmd': 'shutdown'})
+    catch
+    endtry
 endfunction
 
 function! s:Send(payload) abort
-    if s:channel is v:null
-        echoerr 'VIME: Server not running'
+    if !exists('*json_encode') || !exists('*json_decode')
+        echoerr 'VIME: Vim JSON support not available'
         return v:null
     endif
-    " ch_evalexpr sends [msgid, payload] and waits for [msgid, response]
-    let l:resp = ch_evalexpr(s:channel, a:payload, {'timeout': 30000})
-    return l:resp
+    let l:cmd = get(a:payload, 'cmd', '')
+    if l:cmd ==# ''
+        echoerr 'VIME: Missing command for request'
+        return v:null
+    endif
+    let l:url = s:BuildUrl('/' . l:cmd)
+    let l:body = json_encode(a:payload)
+    let l:resp = s:CurlPost(l:url, l:body)
+    if v:shell_error != 0
+        echoerr 'VIME: HTTP request failed'
+        return v:null
+    endif
+    try
+        return json_decode(l:resp)
+    catch
+        echoerr 'VIME: Failed to decode server response'
+        return v:null
+    endtry
 endfunction
 
-function! s:OnServerError(channel, msg) abort
-    " Log server stderr to messages
-    if type(a:msg) == v:t_list
-        for l:line in a:msg
-            if l:line !=# ''
-                call s:AppendDebugLog(l:line)
-            endif
-        endfor
-    elseif a:msg !=# ''
-        call s:AppendDebugLog(a:msg)
-    endif
-    echohl WarningMsg
-    echom 'VIME server: ' . a:msg
-    echohl None
+function! s:BuildUrl(path) abort
+    let l:host = get(g:, 'vime_http_host', '127.0.0.1')
+    let l:port = get(g:, 'vime_http_port', 51789)
+    return 'http://' . l:host . ':' . l:port . a:path
 endfunction
 
-function! s:OnServerExit(job, status) abort
-    let s:job = v:null
-    let s:channel = v:null
-    if a:status != 0
-        echohl ErrorMsg
-        echom 'VIME server exited with status ' . a:status
-        echohl None
+function! s:CurlPost(url, body) abort
+    let l:curl = get(g:, 'vime_curl_cmd', 'curl')
+    let l:cmd = l:curl
+        \ . ' -sS -X POST -H "Content-Type: application/json"'
+        \ . ' -d ' . shellescape(a:body)
+        \ . ' ' . shellescape(a:url)
+    return system(l:cmd)
+endfunction
+
+function! s:PingServer() abort
+    let l:curl = get(g:, 'vime_curl_cmd', 'curl')
+    let l:url = s:BuildUrl('/health')
+    let l:cmd = l:curl . ' -sS ' . shellescape(l:url)
+    let l:resp = system(l:cmd)
+    if v:shell_error != 0 || l:resp ==# ''
+        return 0
     endif
+    if exists('*json_decode')
+        try
+            let l:obj = json_decode(l:resp)
+            return type(l:obj) == v:t_dict && get(l:obj, 'ok', 0)
+        catch
+            return 0
+        endtry
+    endif
+    return 1
 endfunction
 
 " ======================================================================
@@ -780,6 +756,11 @@ call s:DefineVimeHighlights()
 augroup vime_filetype
     autocmd!
     autocmd BufReadCmd *.h5,*.hdf5 call s:OnOpenH5(expand('<afile>:p'))
+augroup END
+
+augroup vime_lifecycle
+    autocmd!
+    autocmd VimLeave * call s:StopServer()
 augroup END
 
 function! s:OnOpenH5(filepath) abort

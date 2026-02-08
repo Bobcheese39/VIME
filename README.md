@@ -4,7 +4,8 @@ A fast, lightweight HDF5 file viewer using Vim as the frontend and a persistent 
 
 ## Requirements
 
-- **Vim 8+** (for `job_start()` / `ch_evalexpr()` channel support)
+- **Vim with JSON support** (`+json`) for `json_encode()` / `json_decode()`
+- **curl** available on PATH
 - **Python 3.6+**
 - Python packages: `h5py`, `pandas`, `numpy`, `tabulate`, `tables`
 
@@ -24,24 +25,50 @@ set runtimepath+=~/path/to/VIME
 
 Replace `~/path/to/VIME` with the actual path to this directory.
 
-3. Restart Vim or run `:source ~/.vimrc`.
+3. Add the wrapper to your PATH (recommended), or use it directly:
+
+```bash
+export PATH="$PATH:/path/to/VIME/scripts"
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:Path = "$env:Path;C:\path\to\VIME\scripts"
+```
+
+4. Restart Vim or run `:source ~/.vimrc`.
 
 ## Usage
 
 ### Opening an H5 File
 
-Simply open an `.h5` or `.hdf5` file with Vim:
+Start VIME via the wrapper so the HTTP server is running:
 
 ```bash
-vim data.h5
+vime data.h5
 ```
 
-VIME intercepts the open command, starts the Python backend, and displays a list of all tables in the file.
+VIME intercepts the open command and displays a list of all tables in the file.
 
 You can also open a file from within Vim:
 
 ```vim
 :VimeOpen /path/to/data.h5
+```
+
+### Wrapper Configuration
+
+The wrapper and plugin use these environment variables (optional):
+
+- `VIME_HTTP_HOST` (default: `127.0.0.1`)
+- `VIME_HTTP_PORT` (default: `51789`)
+- `VIME_PYTHON` (default: `python3` or `python` on Windows)
+
+PowerShell helper:
+
+```powershell
+Set-Alias vime "C:\path\to\VIME\scripts\vime.ps1"
 ```
 
 ### Table List View
@@ -111,13 +138,13 @@ Displays an ASCII plot in a new buffer.
 ## Architecture
 
 ```
- Vim (frontend)  <-- JSON channel -->  Python (backend)
-   - keybindings                          - h5py / pandas
-   - buffer mgmt                          - tabulate
-   - display                              - ASCII plotter
+ Vim (frontend)  <-- HTTP + curl -->  Python (backend)
+   - keybindings                         - h5py / pandas
+   - buffer mgmt                         - tabulate
+   - display                             - ASCII plotter
 ```
 
-The Python backend runs as a persistent subprocess managed by Vim's `job_start()`. Communication uses Vim's built-in JSON channel protocol over stdin/stdout. The H5 file is opened once and kept in memory, making subsequent operations fast.
+The Python backend runs as a separate localhost HTTP server started by the wrapper script. Vim uses `curl` for requests, so crashes in the backend won't affect Vim. The H5 file is opened once and kept in memory, making subsequent operations fast.
 
 ## File Structure
 
@@ -127,6 +154,9 @@ VIME/
     vime.vim           # Vim plugin
   python/
     vime_server.py     # Python backend server
+  scripts/
+    vime               # Wrapper (bash)
+    vime.ps1           # Wrapper (PowerShell)
   requirements.txt     # Python dependencies
   README.md            # This file
 ```
@@ -137,7 +167,7 @@ VIME is designed for Pandas HDFStore files (created with `pd.to_hdf()`). These s
 
 ## Troubleshooting
 
-- **"Server script not found"**: Make sure the `runtimepath` in your `.vimrc` points to the VIME directory correctly.
-- **"Failed to start server"**: Ensure `python3` is on your PATH and the dependencies are installed.
+- **"Server not running"**: Use the `vime` wrapper to start the HTTP server before opening an `.h5`.
+- **"curl not found"**: Install curl and ensure it is on your PATH.
 - **Large tables are slow**: Use `,h` to limit the number of rows displayed, or the default 100-row head.
-- **Check server errors**: Any Python errors are reported via `:messages` in Vim.
+- **Check server errors**: Python server logs go to stderr (terminal where the wrapper started).
