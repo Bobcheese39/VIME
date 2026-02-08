@@ -32,6 +32,9 @@ let s:channel = v:null
 let s:current_file = ''
 let s:compute_timer = -1
 let s:list_bufnr = -1
+let s:debug_bufnr = -1
+let s:debug_lines = []
+let s:debug_max_lines = 500
 
 " ======================================================================
 " Job / Channel management
@@ -105,6 +108,7 @@ endfunction
 
 function! s:OnServerError(channel, msg) abort
     " Log server stderr to messages
+    call s:AppendDebugLog(a:msg)
     echohl WarningMsg
     echom 'VIME server: ' . a:msg
     echohl None
@@ -144,6 +148,7 @@ function! s:CreateScratchBuffer(name, type, ...) abort
     execute 'file ' . fnameescape(a:name)
     let b:vime_type = a:type
     let b:vime_file = s:current_file
+    nnoremap <buffer> <silent> ,pdb :call <SID>ToggleDebugBuffer()<CR>
 endfunction
 
 function! s:SetBufferContent(lines) abort
@@ -176,6 +181,73 @@ function! s:WrapWithBorder(lines) abort
     " Bottom border
     call add(l:result, '┗' . repeat('━', l:maxw + 2) . '┛')
     return l:result
+endfunction
+
+" ======================================================================
+" Debug buffer
+" ======================================================================
+
+function! s:AppendToBuffer(bufnr, line) abort
+    if !bufexists(a:bufnr)
+        return
+    endif
+    call setbufvar(a:bufnr, '&modifiable', 1)
+    let l:last = len(getbufline(a:bufnr, 1, '$'))
+    call setbufline(a:bufnr, l:last + 1, a:line)
+    call setbufvar(a:bufnr, '&modifiable', 0)
+endfunction
+
+function! s:AppendDebugLog(line) abort
+    let l:stamp = strftime('%H:%M:%S')
+    call add(s:debug_lines, l:stamp . ' ' . a:line)
+    let l:overflow = len(s:debug_lines) - s:debug_max_lines
+    if l:overflow > 0
+        call remove(s:debug_lines, 0, l:overflow - 1)
+    endif
+    if s:debug_bufnr > 0 && bufexists(s:debug_bufnr)
+        call s:AppendToBuffer(s:debug_bufnr, l:stamp . ' ' . a:line)
+    endif
+endfunction
+
+function! s:SetDebugKeybindings() abort
+    nnoremap <buffer> <silent> ,pdb :call <SID>ToggleDebugBuffer()<CR>
+    nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
+endfunction
+
+function! s:OpenDebugBuffer() abort
+    if s:debug_bufnr > 0 && bufexists(s:debug_bufnr)
+        let l:winid = bufwinid(s:debug_bufnr)
+        if l:winid != -1
+            call win_gotoid(l:winid)
+            return
+        endif
+        execute 'new'
+        execute 'buffer ' . s:debug_bufnr
+        call s:SetDebugKeybindings()
+        setlocal laststatus=2
+        setlocal statusline=%#VimeFooter#\ \ ,pdb\ Toggle\ Debug\ \ │\ \ ,q\ Close%=
+        call s:ApplyVimeColors()
+        return
+    endif
+
+    call s:CreateScratchBuffer('VIME:debug', 'debug', 'h')
+    let s:debug_bufnr = bufnr('%')
+    call s:SetDebugKeybindings()
+    setlocal laststatus=2
+    setlocal statusline=%#VimeFooter#\ \ ,pdb\ Toggle\ Debug\ \ │\ \ ,q\ Close%=
+    call s:ApplyVimeColors()
+    if !empty(s:debug_lines)
+        call s:SetBufferContent(s:debug_lines)
+    endif
+endfunction
+
+function! s:ToggleDebugBuffer() abort
+    if s:debug_bufnr > 0 && bufexists(s:debug_bufnr) && bufwinid(s:debug_bufnr) != -1
+        execute 'bwipeout ' . s:debug_bufnr
+        let s:debug_bufnr = -1
+        return
+    endif
+    call s:OpenDebugBuffer()
 endfunction
 
 " ======================================================================
@@ -286,7 +358,7 @@ function! s:OpenTableList(filepath) abort
     setlocal laststatus=2
     let b:vime_status = ''
     let s:list_bufnr = bufnr('%')
-    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,c\ Compute\ \ │\ \ ,q\ Quit%=%{get(b:,'vime_status','')}
+    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,c\ Compute\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Quit%=%{get(b:,'vime_status','')}
     call s:ApplyVimeColors()
 endfunction
 
@@ -423,7 +495,7 @@ function! s:OpenTable(name, head) abort
     call s:SetBufferContent(l:lines)
     call s:SetTableKeybindings()
     setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
+    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Close%=
     call s:ApplyVimeColors()
 endfunction
 
@@ -582,7 +654,7 @@ function! s:ShowInfo(name) abort
     nnoremap <buffer> <silent> ,b :call <SID>BackToList()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
     setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ,b\ Back\ \ │\ \ ,q\ Close%=
+    setlocal statusline=%#VimeFooter#\ \ ,b\ Back\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Close%=
     call s:ApplyVimeColors()
 endfunction
 
@@ -613,6 +685,9 @@ function! s:CloseBuf() abort
     let l:type = get(b:, 'vime_type', '')
     if l:type ==# 'list'
         call s:VimeQuit()
+    elseif l:type ==# 'debug'
+        let s:debug_bufnr = -1
+        bwipeout
     else
         bwipeout
     endif
@@ -649,6 +724,7 @@ function! s:VimeQuit() abort
         catch
         endtry
     endfor
+    let s:debug_bufnr = -1
     call s:StopServer()
     " Open a new empty buffer so we don't exit vim
     enew

@@ -1,4 +1,8 @@
+import logging
 import numpy as np
+
+
+logger = logging.getLogger("vime.plotter")
 
 # ======================================================================
 # Braille Plotter
@@ -89,24 +93,35 @@ def braille_plot(x, y, width=72, height=20, x_label="x", y_label="y",
     Returns:
         List of strings (lines of the plot)
     """
+    logger.info(
+        "Braille plot: type=%s points=%d size=%sx%s",
+        plot_type,
+        len(x),
+        width,
+        height,
+    )
     y_axis_width = 10
     plot_width = width - y_axis_width - 1
     plot_height = height
 
     if plot_width < 10 or plot_height < 5:
+        logger.warning("Plot area too small (width=%d height=%d)", plot_width, plot_height)
         return ["Plot area too small. Increase width/height."]
 
     # Data bounds
     x_min, x_max = float(np.min(x)), float(np.max(x))
     y_min, y_max = float(np.min(y)), float(np.max(y))
+    logger.debug("Data bounds: x=[%s,%s] y=[%s,%s]", x_min, x_max, y_min, y_max)
 
     # Handle degenerate cases
     if x_max == x_min:
         x_min -= 1
         x_max += 1
+        logger.debug("Adjusted degenerate x range")
     if y_max == y_min:
         y_min -= 1
         y_max += 1
+        logger.debug("Adjusted degenerate y range")
 
     # Add a small margin
     y_range = y_max - y_min
@@ -117,6 +132,7 @@ def braille_plot(x, y, width=72, height=20, x_label="x", y_label="y",
     canvas = BrailleCanvas(plot_width, plot_height)
     pw = canvas.pixel_width - 1
     ph = canvas.pixel_height - 1
+    logger.debug("Canvas size: %sx%s pixels", canvas.pixel_width, canvas.pixel_height)
 
     def to_pixel(xv, yv):
         px = int(round((xv - x_min) / (x_max - x_min) * pw))

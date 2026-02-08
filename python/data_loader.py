@@ -7,8 +7,12 @@ and converting datasets into pandas DataFrames.
 """
 
 import sys
+import logging
 import pandas as pd
 import h5py
+
+
+logger = logging.getLogger("vime.data_loader")
 
 
 class DataLoader:
@@ -26,6 +30,7 @@ class DataLoader:
 
     def close(self):
         """Close any open file handles."""
+        logger.info("Closing data handles")
         if self.store is not None:
             try:
                 self.store.close()
@@ -43,6 +48,7 @@ class DataLoader:
 
     def open(self, filepath):
         """Open an HDF5 file and return the list of tables."""
+        logger.info("Opening HDF5 file: %s", filepath)
         self.close()
         self.filepath = filepath
 
@@ -56,26 +62,32 @@ class DataLoader:
                 self.store = store
                 self.backend = "pandas"
                 pandas_ok = True
+                logger.info("Opened with pandas backend (%d tables)", len(keys))
             else:
                 # No tables found, close and try h5py
                 store.close()
+                logger.info("No pandas tables found, falling back to h5py")
         except Exception as exc:
             # Not a pandas HDF5 file or other error, will try h5py fallback
             sys.stderr.write(f"VIME: pandas HDFStore failed, trying h5py fallback: {exc}\n")
+            logger.warning("Pandas HDFStore failed, falling back to h5py")
 
         # Fall back to h5py for non-pandas HDF5 files
         if not pandas_ok:
             try:
                 self.h5file = h5py.File(filepath, "r")
                 self.backend = "h5py"
+                logger.info("Opened with h5py backend")
             except Exception as exc:
                 self.h5file = None
+                logger.exception("Failed to open HDF5 with h5py")
                 raise RuntimeError(f"Failed to open HDF5: {exc}") from exc
 
         return self.list_tables()
 
     def list_tables(self):
         """Return a list of dicts with table metadata."""
+        logger.info("Listing tables (backend=%s)", self.backend)
         if self.backend == "h5py":
             return self._get_table_list_h5py()
         if self.backend == "pandas":
@@ -84,8 +96,10 @@ class DataLoader:
 
     def load_table(self, name):
         """Load a table/dataset as a DataFrame from either backend."""
+        logger.info("Loading table: %s (backend=%s)", name, self.backend)
         if self.backend == "pandas":
             if name not in self.store:
+                logger.warning("Table not found in pandas store: %s", name)
                 return None
             return self.store[name]
         if self.backend == "h5py":
@@ -108,9 +122,11 @@ class DataLoader:
                     ncols = "?"
             except Exception as exc:
                 sys.stderr.write(f"VIME: Warning - could not get metadata for {key}: {exc}\n")
+                logger.warning("Failed to read metadata for %s", key)
                 nrows = "?"
                 ncols = "?"
             tables.append({"name": key, "rows": nrows, "cols": ncols})
+        logger.info("Collected %d pandas tables", len(tables))
         return tables
 
     def _get_table_list_h5py(self):
@@ -125,6 +141,7 @@ class DataLoader:
                 datasets.append({"name": "/" + name, "rows": nrows, "cols": ncols})
 
         self.h5file.visititems(_visitor)
+        logger.info("Collected %d h5py datasets", len(datasets))
         return datasets
 
     def _h5py_read_dataset(self, name):
@@ -132,12 +149,15 @@ class DataLoader:
         # Strip leading slash for h5py lookup
         key = name.lstrip("/")
         if key not in self.h5file:
+            logger.warning("Dataset not found in h5py file: %s", name)
             return None
         ds = self.h5file[key]
         if not isinstance(ds, h5py.Dataset):
+            logger.warning("H5 object is not a dataset: %s", name)
             return None
 
         arr = ds[()]
+        logger.info("Read dataset %s with shape %s", name, getattr(arr, "shape", "scalar"))
 
         # Handle structured arrays (compound dtypes, e.g. from MATLAB)
         if arr.dtype.names is not None:

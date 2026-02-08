@@ -13,6 +13,7 @@ import json
 import os
 import threading
 import time
+import logging
 from plotter import braille_plot
 import numpy as np
 from tabulate import tabulate
@@ -36,6 +37,21 @@ class NumpyEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+logger = logging.getLogger("vime")
+
+
+def configure_logging():
+    if logger.handlers:
+        return
+    handler = logging.StreamHandler(sys.stderr)
+    formatter = logging.Formatter(
+        "VIME %(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+
 class VimeServer:
     """Persistent server that holds H5 data and responds to Vim commands."""
 
@@ -57,6 +73,7 @@ class VimeServer:
     def dispatch(self, payload):
         """Route a command dict to the appropriate handler."""
         cmd = payload.get("cmd", "")
+        logger.info("Dispatch command: %s", cmd)
         handlers = {
             "open": self.cmd_open,
             "list": self.cmd_list,
@@ -69,10 +86,12 @@ class VimeServer:
         }
         handler = handlers.get(cmd)
         if handler is None:
+            logger.warning("Unknown command: %s", cmd)
             return {"ok": False, "error": f"Unknown command: {cmd}"}
         try:
             return handler(payload)
         except Exception as exc:
+            logger.exception("Command failed: %s", cmd)
             return {"ok": False, "error": str(exc)}
 
     # ------------------------------------------------------------------
@@ -81,12 +100,15 @@ class VimeServer:
 
     def _close_handles(self):
         """Close any open file handles."""
+        logger.info("Closing open file handles")
         self.loader.close()
 
     def cmd_open(self, payload):
         """Open an HDF5 file and return the list of tables."""
         filepath = payload.get("file", "")
+        logger.info("Opening file: %s", filepath)
         if not filepath or not os.path.isfile(filepath):
+            logger.warning("File not found: %s", filepath)
             return {"ok": False, "error": f"File not found: {filepath}"}
 
         self._close_handles()
@@ -96,26 +118,33 @@ class VimeServer:
         try:
             self.loader.open(filepath)
         except Exception as exc:
+            logger.exception("Failed to open file: %s", filepath)
             return {"ok": False, "error": str(exc)}
+        logger.info("File opened: %s", filepath)
         return {"ok": True, "tables": self._get_table_list()}
 
     def cmd_list(self, _payload):
         """Return the list of tables in the currently open file."""
         if not self.loader.is_open:
+            logger.warning("List requested with no file open")
             return {"ok": False, "error": "No file open"}
         tables = self._get_table_list()
+        logger.info("Listed %d tables", len(tables))
         return {"ok": True, "tables": tables}
 
     def cmd_table(self, payload):
         """Read a table and return its formatted content."""
         if not self.loader.is_open:
+            logger.warning("Table requested with no file open")
             return {"ok": False, "error": "No file open"}
 
         name = payload.get("name", "")
         head = payload.get("head", 100)
+        logger.info("Loading table: %s (head=%s)", name, head)
 
         df = self._load_table(name)
         if df is None:
+            logger.warning("Table not found: %s", name)
             return {"ok": False, "error": f"Table not found: {name}"}
 
         self.current_df = df
@@ -139,6 +168,7 @@ class VimeServer:
         header = f"{name}{shape_info}"
 
         columns = [str(c) for c in df.columns]
+        logger.info("Loaded table: %s (rows=%d cols=%d)", name, len(df), len(df.columns))
         return {
             "ok": True,
             "content": header + "\n\n" + content,
@@ -149,12 +179,14 @@ class VimeServer:
     def cmd_plot(self, payload):
         """Generate a braille Unicode plot from the current table."""
         if self.current_df is None:
+            logger.warning("Plot requested with no table loaded")
             return {"ok": False, "error": "No table loaded. Open a table first."}
 
         cols = payload.get("cols", [])
         plot_type = payload.get("type", "line")
         width = payload.get("width", 72)
         height = payload.get("height", 20)
+        logger.info("Plot request: cols=%s type=%s size=%sx%s", cols, plot_type, width, height)
 
         if len(cols) < 2:
             return {"ok": False, "error": "Need at least 2 column indices (x y)"}
@@ -166,17 +198,20 @@ class VimeServer:
             x_col = self._resolve_column(df, cols[0])
             y_col = self._resolve_column(df, cols[1])
         except (IndexError, KeyError) as exc:
+            logger.warning("Invalid plot column: %s", exc)
             return {"ok": False, "error": f"Invalid column: {exc}"}
 
         # Convert to float with error handling for non-numeric data
         try:
             x = df[x_col].values.astype(float)
         except (ValueError, TypeError) as exc:
+            logger.warning("Non-numeric x column %s: %s", x_col, exc)
             return {"ok": False, "error": f"Cannot convert column '{x_col}' to numeric: {exc}"}
         
         try:
             y = df[y_col].values.astype(float)
         except (ValueError, TypeError) as exc:
+            logger.warning("Non-numeric y column %s: %s", y_col, exc)
             return {"ok": False, "error": f"Cannot convert column '{y_col}' to numeric: {exc}"}
 
         # Remove NaN pairs
@@ -184,6 +219,7 @@ class VimeServer:
         x, y = x[mask], y[mask]
 
         if len(x) == 0:
+            logger.warning("No valid data points after NaN filtering")
             return {"ok": False, "error": "No valid data points to plot"}
 
         plot_lines = braille_plot(x, y, width=width, height=height,
@@ -191,17 +227,21 @@ class VimeServer:
                                   plot_type=plot_type)
         title = f"Plot: {x_col} vs {y_col}  ({self.current_table})"
         content = title + "\n\n" + "\n".join(plot_lines)
+        logger.info("Plot generated: %s vs %s (%d points)", x_col, y_col, len(x))
         return {"ok": True, "content": content}
 
     def cmd_info(self, payload):
         """Return detailed info about a table."""
         if not self.loader.is_open:
+            logger.warning("Info requested with no file open")
             return {"ok": False, "error": "No file open"}
 
         name = payload.get("name", "")
+        logger.info("Info requested for table: %s", name)
 
         df = self._load_table(name)
         if df is None:
+            logger.warning("Info table not found: %s", name)
             return {"ok": False, "error": f"Table not found: {name}"}
 
         lines = []
@@ -236,12 +276,14 @@ class VimeServer:
 
     def cmd_close(self, _payload):
         """Close the store and exit."""
+        logger.info("Close requested, shutting down")
         self._close_handles()
         sys.exit(0)
 
     def cmd_compute_start(self, _payload):
         """Start a background compute job using test_compute()."""
         if self.compute_thread is not None and self.compute_thread.is_alive():
+            logger.warning("Compute start requested while already running")
             return {"ok": False, "error": "Compute already running", "status": "running"}
 
         self.compute_state = "running"
@@ -253,10 +295,12 @@ class VimeServer:
             target=self._run_compute_job, name="vime-compute", daemon=True
         )
         self.compute_thread.start()
+        logger.info("Compute thread started")
         return {"ok": True, "status": self.compute_state, "message": self.compute_message}
 
     def cmd_compute_status(self, _payload):
         """Return the current compute job status."""
+        logger.info("Compute status requested: %s", self.compute_state)
         return {
             "ok": True,
             "status": self.compute_state,
@@ -276,13 +320,16 @@ class VimeServer:
             DataFrame if successful, None if not found.
         """
         if name in self.virtual_tables:
+            logger.info("Loading virtual table: %s", name)
             return self.virtual_tables[name]["df"]
+        logger.info("Loading table from store: %s", name)
         return self.loader.load_table(name)
 
     def _get_table_list(self):
         """Return a list of dicts with table metadata."""
         tables = list(self.loader.list_tables())
         if self.virtual_tables:
+            logger.info("Adding %d virtual tables", len(self.virtual_tables))
             tables.extend(
                 {
                     "name": entry["name"],
@@ -306,6 +353,7 @@ class VimeServer:
 
     def _run_compute_job(self):
         try:
+            logger.info("Compute job started")
             df = test_compute()
             name = self._new_compute_name()
             self.virtual_tables[name] = {
@@ -318,10 +366,12 @@ class VimeServer:
             self.compute_state = "done"
             self.compute_message = f"Compute done: {name}"
             self.compute_error = None
+            logger.info("Compute job completed: %s", name)
         except Exception as exc:
             self.compute_state = "error"
             self.compute_message = "Compute failed"
             self.compute_error = str(exc)
+            logger.exception("Compute job failed")
 
     @staticmethod
     def _resolve_column(df, ref):
@@ -352,6 +402,8 @@ class VimeServer:
 
 def main():
     """Main event loop: read JSON commands from stdin, write responses to stdout."""
+    configure_logging()
+    logger.info("VIME server starting")
     server = VimeServer()
 
     # Ensure stdout is unbuffered for reliable communication
@@ -371,16 +423,19 @@ def main():
         try:
             msg = json.loads(raw_line)
         except json.JSONDecodeError:
+            logger.warning("Invalid JSON payload received")
             continue
 
         # Vim JSON channel protocol: [msgid, payload]
         if not isinstance(msg, list) or len(msg) < 2:
+            logger.warning("Invalid message envelope received")
             continue
 
         msgid = msg[0]
         payload = msg[1]
 
         if not isinstance(payload, dict):
+            logger.warning("Payload is not a dict")
             response = {"ok": False, "error": "Payload must be a dict"}
         else:
             response = server.dispatch(payload)
@@ -389,6 +444,7 @@ def main():
         try:
             out = json.dumps([msgid, response], cls=NumpyEncoder)
         except Exception as enc_err:
+            logger.exception("JSON encode error")
             sys.stderr.write(f"VIME JSON encode error: {enc_err}\n")
             out = json.dumps([msgid, {"ok": False,
                                       "error": f"Internal encode error: {enc_err}"}])
