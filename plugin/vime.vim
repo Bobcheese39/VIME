@@ -232,6 +232,7 @@ function! s:OpenDebugBuffer() abort
         endif
         execute 'new'
         execute 'buffer ' . s:debug_bufnr
+        execute 'resize 5'
         call s:SetDebugKeybindings()
         setlocal laststatus=2
         setlocal statusline=%#VimeFooter#\ \ ,pdb\ Toggle\ Debug\ \ │\ \ ,q\ Close%=
@@ -241,6 +242,7 @@ function! s:OpenDebugBuffer() abort
 
     call s:CreateScratchBuffer('VIME:debug', 'debug', 'h')
     let s:debug_bufnr = bufnr('%')
+    execute 'resize 5'
     call s:SetDebugKeybindings()
     setlocal laststatus=2
     setlocal statusline=%#VimeFooter#\ \ ,pdb\ Toggle\ Debug\ \ │\ \ ,q\ Close%=
