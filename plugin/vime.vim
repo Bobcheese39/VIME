@@ -204,6 +204,10 @@ function! s:AppendToBuffer(bufnr, line) abort
     let l:last = len(getbufline(a:bufnr, 1, '$'))
     call setbufline(a:bufnr, l:last + 1, a:line)
     call setbufvar(a:bufnr, '&modifiable', 0)
+    let l:winid = bufwinid(a:bufnr)
+    if l:winid != -1
+        call win_execute(l:winid, 'normal! G')
+    endif
 endfunction
 
 function! s:AppendDebugLog(line) abort
