@@ -65,6 +65,7 @@ function! s:StartServer() abort
     endif
     let s:job = job_start(l:cmd, {
         \ 'mode': 'json',
+        \ 'err_mode': 'nl',
         \ 'err_cb': function('s:OnServerError'),
         \ 'exit_cb': function('s:OnServerExit'),
         \ })
@@ -108,7 +109,15 @@ endfunction
 
 function! s:OnServerError(channel, msg) abort
     " Log server stderr to messages
-    call s:AppendDebugLog(a:msg)
+    if type(a:msg) == v:t_list
+        for l:line in a:msg
+            if l:line !=# ''
+                call s:AppendDebugLog(l:line)
+            endif
+        endfor
+    elseif a:msg !=# ''
+        call s:AppendDebugLog(a:msg)
+    endif
     echohl WarningMsg
     echom 'VIME server: ' . a:msg
     echohl None
