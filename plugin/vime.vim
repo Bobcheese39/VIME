@@ -30,6 +30,7 @@ let s:list_bufnr = -1
 let s:debug_bufnr = -1
 let s:debug_lines = []
 let s:debug_max_lines = 500
+let s:plugin_dir = fnamemodify(expand('<sfile>:p'), ':h')
 
 " ======================================================================
 " HTTP request management
@@ -349,12 +350,15 @@ function! s:OpenTableList(filepath) abort
     setlocal laststatus=2
     let b:vime_status = ''
     let s:list_bufnr = bufnr('%')
-    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,c\ Compute\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Quit%=%{get(b:,'vime_status','')}
+    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,gv\ V-Open\ \ │\ \ ,gh\ H-Open\ \ │\ \ ,s\ Config\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,c\ Compute\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Quit%=%{get(b:,'vime_status','')}
     call s:ApplyVimeColors()
 endfunction
 
 function! s:SetListKeybindings() abort
     nnoremap <buffer> <silent> <CR> :call <SID>ListSelectTable()<CR>
+    nnoremap <buffer> <silent> ,gv :call <SID>ListSelectTable('v')<CR>
+    nnoremap <buffer> <silent> ,gh :call <SID>ListSelectTable('h')<CR>
+    nnoremap <buffer> <silent> ,s :call <SID>OpenConfig()<CR>
     nnoremap <buffer> <silent> ,i :call <SID>ListTableInfo()<CR>
     nnoremap <buffer> <silent> ,r :call <SID>ListRefresh()<CR>
     nnoremap <buffer> <silent> ,c :call <SID>ListComputeStart()<CR>
@@ -375,13 +379,28 @@ function! s:GetTableNameUnderCursor() abort
     return ''
 endfunction
 
-function! s:ListSelectTable() abort
+function! s:ListSelectTable(...) abort
+    let l:split = a:0 >= 1 ? a:1 : ''
     let l:name = s:GetTableNameUnderCursor()
     if l:name ==# ''
         echo 'VIME: No table under cursor'
         return
     endif
-    call s:OpenTable(l:name, 100)
+    call s:OpenTable(l:name, 100, l:split)
+endfunction
+
+function! s:OpenConfig() abort
+    let l:candidates = [
+        \ fnamemodify(s:plugin_dir, ':h') . '/config.cfg',
+        \ getcwd() . '/config.cfg'
+        \ ]
+    for l:path in l:candidates
+        if filereadable(l:path)
+            execute 'edit ' . fnameescape(fnamemodify(l:path, ':p'))
+            return
+        endif
+    endfor
+    echo 'VIME: config.cfg not found'
 endfunction
 
 function! s:ListTableInfo() abort
@@ -464,7 +483,8 @@ endfunction
 " Table content buffer
 " ======================================================================
 
-function! s:OpenTable(name, head) abort
+function! s:OpenTable(name, head, ...) abort
+    let l:split = a:0 >= 1 ? a:1 : ''
     let l:resp = s:Send({'cmd': 'table', 'name': a:name, 'head': a:head})
 
     if type(l:resp) != v:t_dict
@@ -476,7 +496,7 @@ function! s:OpenTable(name, head) abort
         return
     endif
 
-    call s:CreateScratchBuffer('VIME:' . a:name, 'table')
+    call s:CreateScratchBuffer('VIME:' . a:name, 'table', l:split)
     let b:vime_table_name = a:name
     let b:vime_columns = get(l:resp, 'columns', [])
 

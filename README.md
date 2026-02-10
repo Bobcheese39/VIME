@@ -91,6 +91,9 @@ When you open an H5 file, you see a list of all tables with their dimensions:
 | Key       | Action                              |
 |-----------|-------------------------------------|
 | `<Enter>` | Open the table under the cursor     |
+| `,gv`     | Open table in a vertical split      |
+| `,gh`     | Open table in a horizontal split    |
+| `,s`      | Open `config.cfg`                   |
 | `,i`      | Show info (shape, dtypes, summary)  |
 | `,r`      | Refresh the table list              |
 | `,q`      | Quit VIME and stop the backend      |
