@@ -143,7 +143,7 @@ class VimeServer:
 
         name = payload.get("name", "")
         head = payload.get("head", 100)
-        fast = bool(payload.get("fast", True))
+        fast = bool(payload.get("fast", False))
         logger.info("Loading table: %s (head=%s fast=%s)", name, head, fast)
 
         if fast:
