@@ -2,8 +2,8 @@
 """
 VIME Server - Persistent Python backend for the VIME Vim H5 viewer.
 
-Communicates with Vim over stdin/stdout using the Vim JSON channel protocol.
-Protocol: Vim sends [msgid, {command}], server responds with [msgid, {result}].
+Communicates with Vim over HTTP using JSON request/response payloads.
+Protocol: Client sends POST requests with JSON payloads, server responds with JSON.
 
 Keeps HDF5 data in memory so files only need to be loaded once.
 """
@@ -56,7 +56,7 @@ def configure_logging():
 
 
 class VimeServer:
-    """Persistent server that holds H5 data and responds to Vim commands."""
+       """Persistent server that holds H5 data and responds to HTTP requests."""
 
     def __init__(self):
         self.loader = DataLoader()
@@ -468,6 +468,8 @@ def make_handler(vime_server):
             }
             return routes.get(path)
 
+
+        # http get
         def do_GET(self):
             parsed = urlparse(self.path)
             if parsed.path == "/health":
@@ -475,6 +477,7 @@ def make_handler(vime_server):
                 return
             self._send_json(404, {"ok": False, "error": "Not found"})
 
+        # http post
         def do_POST(self):
             parsed = urlparse(self.path)
             if parsed.path == "/shutdown":
