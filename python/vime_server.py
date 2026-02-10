@@ -56,7 +56,7 @@ def configure_logging():
 
 
 class VimeServer:
-       """Persistent server that holds H5 data and responds to HTTP requests."""
+    """Persistent server that holds H5 data and responds to HTTP requests."""
 
     def __init__(self):
         self.loader = DataLoader()
