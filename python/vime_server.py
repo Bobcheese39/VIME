@@ -465,11 +465,8 @@ def make_handler(vime_server):
                 "/compute_start": "compute_start",
                 "/compute_status": "compute_status",
                 "/close": "close",
-            }
+                }
             return routes.get(path)
-
-
-        # http get
         def do_GET(self):
             parsed = urlparse(self.path)
             if parsed.path == "/health":
@@ -477,7 +474,6 @@ def make_handler(vime_server):
                 return
             self._send_json(404, {"ok": False, "error": "Not found"})
 
-        # http post
         def do_POST(self):
             parsed = urlparse(self.path)
             if parsed.path == "/shutdown":
