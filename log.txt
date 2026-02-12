@@ -1,0 +1,39 @@
+VIME 21:20:41 [INFO] Loading table: /radar_data (backend=h5py)
+VIME 21:20:41 [INFO] Read dataset /radar_data with shape (139736,)
+VIME 21:20:41 [INFO] Loaded table: /radar_data (rows=139736 cols=14)
+VIME 21:20:41 [INFO] 127.0.0.1 - "POST /table HTTP/1.1" 200 -
+VIME 21:20:54 [INFO] Dispatch command: table
+VIME 21:20:54 [INFO] Loading table: /odometry (head=100 fast=False)
+VIME 21:20:54 [INFO] Loading table from store: /odometry
+VIME 21:20:54 [INFO] Loading table: /odometry (backend=h5py)
+VIME 21:20:54 [INFO] Read dataset /odometry with shape (3253,)
+VIME 21:20:54 [INFO] Loaded table: /odometry (rows=3253 cols=6)
+VIME 21:20:54 [INFO] 127.0.0.1 - "POST /table HTTP/1.1" 200 -
+VIME 21:21:02 [INFO] 127.0.0.1 - "GET /health HTTP/1.1" 200 -
+VIME 21:21:02 [INFO] Dispatch command: open
+VIME 21:21:02 [INFO] Opening file: /home/admino/Documents/coding/VIME/radar_data.h5
+VIME 21:21:02 [INFO] Closing open file handles
+VIME 21:21:02 [INFO] Closing data handles
+VIME 21:21:02 [INFO] Opening HDF5 file: /home/admino/Documents/coding/VIME/radar_data.h5
+VIME 21:21:02 [INFO] Closing data handles
+VIME 21:21:02 [INFO] No pandas tables found, falling back to h5py
+VIME 21:21:02 [INFO] Opened with h5py backend
+VIME 21:21:02 [INFO] Listing tables (backend=h5py)
+VIME 21:21:02 [INFO] Collected 2 h5py datasets
+VIME 21:21:02 [INFO] File opened: /home/admino/Documents/coding/VIME/radar_data.h5
+VIME 21:21:02 [INFO] Listing tables (backend=h5py)
+VIME 21:21:02 [INFO] Collected 2 h5py datasets
+VIME 21:21:02 [INFO] 127.0.0.1 - "POST /open HTTP/1.1" 200 -
+VIME 21:21:04 [INFO] Dispatch command: table
+VIME 21:21:04 [INFO] Loading table: /radar_data (head=100 fast=False)
+VIME 21:21:04 [INFO] Loading table from store: /radar_data
+VIME 21:21:04 [INFO] Loading table: /radar_data (backend=h5py)
+VIME 21:21:04 [INFO] Read dataset /radar_data with shape (139736,)
+VIME 21:21:04 [INFO] Loaded table: /radar_data (rows=139736 cols=14)
+VIME 21:21:04 [INFO] 127.0.0.1 - "POST /table HTTP/1.1" 200 -
+VIME 21:21:16 [INFO] Shutdown requested via HTTP
+VIME 21:21:16 [INFO] Closing open file handles
+VIME 21:21:16 [INFO] Closing data handles
+VIME 21:21:16 [INFO] 127.0.0.1 - "POST /shutdown HTTP/1.1" 200 -
+VIME 21:21:16 [INFO] Closing open file handles
+VIME 21:21:16 [INFO] Closing data handles
