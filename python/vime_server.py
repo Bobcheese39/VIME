@@ -22,6 +22,7 @@ import numpy as np
 from tabulate import tabulate
 from data_loader import DataLoader
 from test_compute import test_compute
+from config import Config
 
 
 
@@ -68,6 +69,12 @@ class VimeServer:
         self.compute_message = ""
         self.compute_table_name = None
         self.compute_error = None
+        self.config = None
+        try:
+            self.config = Config()
+            logger.info("Table config initialized")
+        except Exception as exc:
+            logger.warning("Table config disabled: %s", exc)
 
     # ------------------------------------------------------------------
     # Command dispatch
@@ -159,6 +166,7 @@ class VimeServer:
             logger.warning("Table not found: %s", name)
             return {"ok": False, "error": f"Table not found: {name}"}
 
+        df = self._apply_column_config(name, df)
         self.current_df = df
         self.current_table = name
 
@@ -336,6 +344,24 @@ class VimeServer:
             return self.virtual_tables[name]["df"]
         logger.info("Loading table from store: %s", name)
         return self.loader.load_table(name)
+
+    def _apply_column_config(self, table_name, df):
+        """Apply configured column order/visibility for a table."""
+        if self.config is None:
+            return df
+
+        discovered = [str(col) for col in df.columns]
+        try:
+            configured = self.config.merge_table_columns(table_name, discovered)
+        except Exception as exc:
+            logger.warning("Failed to sync table config for %s: %s", table_name, exc)
+            return df
+
+        col_map = {str(col): col for col in df.columns}
+        ordered_actual = [col_map[col] for col in configured if col in col_map]
+        if not ordered_actual:
+            return df
+        return df.loc[:, ordered_actual]
 
     def _get_table_list(self):
         """Return a list of dicts with table metadata."""
