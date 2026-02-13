@@ -19,6 +19,17 @@ is_healthy() {
   curl -sS "$health_url" >/dev/null 2>&1
 }
 
+wait_for_active_port() {
+  local checks=$((STARTUP_WAIT_SECONDS * 10))
+  for ((check = 0; check < checks; check++)); do
+    if is_healthy "$ACTIVE_PORT"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 if ! [[ "$PORT_RETRIES" =~ ^[0-9]+$ ]] || [ "$PORT_RETRIES" -lt 1 ]; then
   PORT_RETRIES=100
 fi
@@ -61,9 +72,17 @@ if [ "$STARTED_BY_WRAPPER" -eq 1 ]; then
   OWNER_ARGS+=(-c "let g:vime_owns_server=1")
 fi
 
+if ! wait_for_active_port; then
+  echo "VIME: backend did not become healthy within ${STARTUP_WAIT_SECONDS}s on ${HOST}:${ACTIVE_PORT}" >&2
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+    kill "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
+  exit 1
+fi
+
 vim \
-  -c "let g:vime_http_host='${HOST}'" \
-  -c "let g:vime_http_port=${ACTIVE_PORT}" \
+  --cmd "let g:vime_http_host='${HOST}'" \
+  --cmd "let g:vime_http_port=${ACTIVE_PORT}" \
   "${OWNER_ARGS[@]}" \
   "$@"
 
