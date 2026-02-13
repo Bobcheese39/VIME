@@ -93,7 +93,7 @@ def braille_plot(x, y, width=72, height=20, x_label="x", y_label="y",
     Returns:
         List of strings (lines of the plot)
     """
-    logger.info(
+    logger.debug(
         "Braille plot: type=%s points=%d size=%sx%s",
         plot_type,
         len(x),

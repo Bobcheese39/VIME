@@ -16,7 +16,10 @@ import time
 import logging
 import argparse
 import errno
+from dataclasses import dataclass
+from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Optional
 from urllib.parse import urlparse
 from plotter import braille_plot
 import numpy as np
@@ -25,6 +28,22 @@ from data_loader import DataLoader
 from test_compute import test_compute
 from config import Config
 
+
+class ComputeStatus(Enum):
+    """Possible states for a background compute job."""
+    IDLE = "idle"
+    RUNNING = "running"
+    DONE = "done"
+    ERROR = "error"
+
+
+@dataclass
+class ComputeState:
+    """Snapshot of a background compute job's progress."""
+    status: ComputeStatus = ComputeStatus.IDLE
+    message: str = ""
+    table_name: Optional[str] = None
+    error: Optional[str] = None
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -72,10 +91,7 @@ class VimeServer:
         self.current_table = None  # Name of the last-fetched table
         self.virtual_tables = {}   # Virtual tables created by compute jobs
         self.compute_thread = None
-        self.compute_state = "idle"
-        self.compute_message = ""
-        self.compute_table_name = None
-        self.compute_error = None
+        self.compute = ComputeState()
         self.config = None
         try:
             self.config = Config()
@@ -90,7 +106,7 @@ class VimeServer:
     def dispatch(self, payload):
         """Route a command dict to the appropriate handler."""
         cmd = payload.get("cmd", "")
-        logger.info("Dispatch command: %s", cmd)
+        logger.debug("Dispatch command: %s", cmd)
         handlers = {
             "open": self.cmd_open,
             "table": self.cmd_table,
@@ -148,7 +164,7 @@ class VimeServer:
         name = payload.get("name", "")
         head = payload.get("head", 100)
         fast = bool(payload.get("fast", False))
-        logger.info("Loading table: %s (head=%s fast=%s)", name, head, fast)
+        logger.debug("Loading table: %s (head=%s fast=%s)", name, head, fast)
 
         if fast:
             data = self.loader.load_table_fast(name)
@@ -185,7 +201,7 @@ class VimeServer:
         header = f"{name}{shape_info}"
 
         columns = [str(c) for c in df.columns]
-        logger.info("Loaded table: %s (rows=%d cols=%d)", name, len(df), len(df.columns))
+        logger.debug("Loaded table: %s (rows=%d cols=%d)", name, len(df), len(df.columns))
         return {
             "ok": True,
             "content": header + "\n\n" + content,
@@ -203,7 +219,7 @@ class VimeServer:
         plot_type = payload.get("type", "line")
         width = payload.get("width", 72)
         height = payload.get("height", 20)
-        logger.info("Plot request: cols=%s type=%s size=%sx%s", cols, plot_type, width, height)
+        logger.debug("Plot request: cols=%s type=%s size=%sx%s", cols, plot_type, width, height)
 
         if len(cols) < 2:
             return {"ok": False, "error": "Need at least 2 column indices (x y)"}
@@ -244,7 +260,7 @@ class VimeServer:
                                   plot_type=plot_type)
         title = f"Plot: {x_col} vs {y_col}  ({self.current_table})"
         content = title + "\n\n" + "\n".join(plot_lines)
-        logger.info("Plot generated: %s vs %s (%d points)", x_col, y_col, len(x))
+        logger.debug("Plot generated: %s vs %s (%d points)", x_col, y_col, len(x))
         return {"ok": True, "content": content}
 
     def cmd_info(self, payload):
@@ -254,7 +270,7 @@ class VimeServer:
             return {"ok": False, "error": "No file open"}
 
         name = payload.get("name", "")
-        logger.info("Info requested for table: %s", name)
+        logger.debug("Info requested for table: %s", name)
 
         df = self._load_table(name)
         if df is None:
@@ -301,29 +317,26 @@ class VimeServer:
         """Start a background compute job using test_compute()."""
         if self.compute_thread is not None and self.compute_thread.is_alive():
             logger.warning("Compute start requested while already running")
-            return {"ok": False, "error": "Compute already running", "status": "running"}
+            return {"ok": False, "error": "Compute already running", "status": ComputeStatus.RUNNING.value}
 
-        self.compute_state = "running"
-        self.compute_message = "Computing..."
-        self.compute_table_name = None
-        self.compute_error = None
+        self.compute = ComputeState(status=ComputeStatus.RUNNING, message="Computing...")
 
         self.compute_thread = threading.Thread(
             target=self._run_compute_job, name="vime-compute", daemon=True
         )
         self.compute_thread.start()
         logger.info("Compute thread started")
-        return {"ok": True, "status": self.compute_state, "message": self.compute_message}
+        return {"ok": True, "status": self.compute.status.value, "message": self.compute.message}
 
     def cmd_compute_status(self, _payload):
         """Return the current compute job status."""
-        logger.info("Compute status requested: %s", self.compute_state)
+        logger.debug("Compute status requested: %s", self.compute.status.value)
         return {
             "ok": True,
-            "status": self.compute_state,
-            "message": self.compute_message,
-            "table": self.compute_table_name,
-            "error": self.compute_error,
+            "status": self.compute.status.value,
+            "message": self.compute.message,
+            "table": self.compute.table_name,
+            "error": self.compute.error,
         }
 
     # ------------------------------------------------------------------
@@ -337,9 +350,9 @@ class VimeServer:
             DataFrame if successful, None if not found.
         """
         if name in self.virtual_tables:
-            logger.info("Loading virtual table: %s", name)
+            logger.debug("Loading virtual table: %s", name)
             return self.virtual_tables[name]["df"]
-        logger.info("Loading table from store: %s", name)
+        logger.debug("Loading table from store: %s", name)
         return self.loader.load_table(name)
 
     def _apply_column_config(self, table_name, df):
@@ -364,7 +377,7 @@ class VimeServer:
         """Return a list of dicts with table metadata."""
         tables = list(self.loader.list_tables())
         if self.virtual_tables:
-            logger.info("Adding %d virtual tables", len(self.virtual_tables))
+            logger.debug("Adding %d virtual tables", len(self.virtual_tables))
             tables.extend(
                 {
                     "name": entry["name"],
@@ -414,15 +427,18 @@ class VimeServer:
                 "rows": int(df.shape[0]),
                 "cols": int(df.shape[1]),
             }
-            self.compute_table_name = name
-            self.compute_state = "done"
-            self.compute_message = f"Compute done: {name}"
-            self.compute_error = None
+            self.compute = ComputeState(
+                status=ComputeStatus.DONE,
+                message=f"Compute done: {name}",
+                table_name=name,
+            )
             logger.info("Compute job completed: %s", name)
         except Exception as exc:
-            self.compute_state = "error"
-            self.compute_message = "Compute failed"
-            self.compute_error = str(exc)
+            self.compute = ComputeState(
+                status=ComputeStatus.ERROR,
+                message="Compute failed",
+                error=str(exc),
+            )
             logger.exception("Compute job failed")
 
     @staticmethod
@@ -509,7 +525,7 @@ def make_handler(vime_server):
             self._send_json(200, response)
 
         def log_message(self, fmt, *args):
-            logger.info("%s - %s", self.address_string(), fmt % args)
+            logger.debug("%s - %s", self.address_string(), fmt % args)
 
     return VimeHandler
 

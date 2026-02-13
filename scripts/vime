@@ -72,14 +72,6 @@ if [ "$STARTED_BY_WRAPPER" -eq 1 ]; then
   OWNER_ARGS+=(-c "let g:vime_owns_server=1")
 fi
 
-if ! wait_for_active_port; then
-  echo "VIME: backend did not become healthy within ${STARTUP_WAIT_SECONDS}s on ${HOST}:${ACTIVE_PORT}" >&2
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" >/dev/null 2>&1; then
-    kill "$SERVER_PID" >/dev/null 2>&1 || true
-  fi
-  exit 1
-fi
-
 vim \
   --cmd "let g:vime_http_host='${HOST}'" \
   --cmd "let g:vime_http_port=${ACTIVE_PORT}" \

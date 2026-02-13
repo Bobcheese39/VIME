@@ -35,7 +35,7 @@ class Config:
             with open(self.path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             self._tables = self._sanitize(data)
-            logger.info("Loaded table config: %s (%d tables)", self.path, len(self._tables))
+            logger.debug("Loaded table config: %s (%d tables)", self.path, len(self._tables))
         except Exception as exc:
             logger.warning("Failed to load config %s: %s", self.path, exc)
             self._tables = {}

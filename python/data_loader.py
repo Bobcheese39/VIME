@@ -87,7 +87,7 @@ class DataLoader:
 
     def list_tables(self):
         """Return a list of dicts with table metadata."""
-        logger.info("Listing tables (backend=%s)", self.backend)
+        logger.debug("Listing tables (backend=%s)", self.backend)
         if self.backend == "h5py":
             return self._get_table_list_h5py()
         if self.backend == "pandas":
@@ -96,7 +96,7 @@ class DataLoader:
 
     def load_table(self, name):
         """Load a table/dataset as a DataFrame from either backend."""
-        logger.info("Loading table: %s (backend=%s)", name, self.backend)
+        logger.debug("Loading table: %s (backend=%s)", name, self.backend)
         if self.backend == "pandas":
             if name not in self.store:
                 logger.warning("Table not found in pandas store: %s", name)
@@ -108,7 +108,7 @@ class DataLoader:
 
     def load_table_fast(self, name):
         """Load a table/dataset as raw data, skipping pandas DataFrames."""
-        logger.info("Fast loading table: %s (backend=%s)", name, self.backend)
+        logger.debug("Fast loading table: %s (backend=%s)", name, self.backend)
         if self.backend == "pandas":
             if name not in self.store:
                 logger.warning("Table not found in pandas store: %s", name)
@@ -138,7 +138,7 @@ class DataLoader:
                 nrows = "?"
                 ncols = "?"
             tables.append({"name": key, "rows": nrows, "cols": ncols})
-        logger.info("Collected %d pandas tables", len(tables))
+        logger.debug("Collected %d pandas tables", len(tables))
         return tables
 
     def _get_table_list_h5py(self):
@@ -153,7 +153,7 @@ class DataLoader:
                 datasets.append({"name": "/" + name, "rows": nrows, "cols": ncols})
 
         self.h5file.visititems(_visitor)
-        logger.info("Collected %d h5py datasets", len(datasets))
+        logger.debug("Collected %d h5py datasets", len(datasets))
         return datasets
 
     def _pandas_read_table_fast(self, name):
@@ -195,7 +195,7 @@ class DataLoader:
             return None
 
         arr = ds[()]
-        logger.info("Read dataset %s with shape %s", name, getattr(arr, "shape", "scalar"))
+        logger.debug("Read dataset %s with shape %s", name, getattr(arr, "shape", "scalar"))
 
         # Handle structured arrays (compound dtypes, e.g. from MATLAB)
         if arr.dtype.names is not None:
