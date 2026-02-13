@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,10 +47,15 @@ if ! is_healthy "$PORT_START"; then
 fi
 
 SHUTDOWN_URL="http://${HOST}:${ACTIVE_PORT}/shutdown"
+OWNER_ARGS=()
+if [ "$STARTED_BY_WRAPPER" -eq 1 ]; then
+  OWNER_ARGS+=(-c "let g:vime_owns_server=1")
+fi
 
 vim \
   -c "let g:vime_http_host='${HOST}'" \
   -c "let g:vime_http_port=${ACTIVE_PORT}" \
+  "${OWNER_ARGS[@]}" \
   "$@"
 
 if [ "$STARTED_BY_WRAPPER" -eq 1 ]; then

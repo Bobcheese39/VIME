@@ -780,7 +780,7 @@ augroup END
 
 augroup vime_lifecycle
     autocmd!
-    autocmd VimLeave * call s:StopServer()
+    autocmd VimLeave * if get(g:, 'vime_owns_server', 0) | call s:StopServer() | endif
 augroup END
 
 function! s:OnOpenH5(filepath) abort
