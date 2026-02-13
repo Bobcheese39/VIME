@@ -15,6 +15,7 @@ import threading
 import time
 import logging
 import argparse
+import errno
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from plotter import braille_plot
@@ -54,6 +55,12 @@ def configure_logging():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+
+
+class VimeHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server with strict port exclusivity."""
+
+    allow_reuse_address = False
 
 
 class VimeServer:
@@ -529,16 +536,49 @@ def make_handler(vime_server):
     return VimeHandler
 
 
+def _bind_http_server(host, start_port, max_attempts, handler_cls):
+    """Bind HTTP server with incremental port fallback."""
+    attempts = max(1, int(max_attempts))
+    for offset in range(attempts):
+        port = start_port + offset
+        try:
+            return VimeHTTPServer((host, port), handler_cls), port
+        except OSError as exc:
+            win_addr_in_use = getattr(errno, "WSAEADDRINUSE", 10048)
+            if exc.errno in (errno.EADDRINUSE, win_addr_in_use):
+                logger.info("Port %s already in use, trying %s", port, port + 1)
+                continue
+            raise
+
+    end_port = start_port + attempts - 1
+    raise RuntimeError(
+        f"No open port found for {host} in range {start_port}-{end_port}"
+    )
+
+
 def main():
     configure_logging()
     parser = argparse.ArgumentParser(description="VIME HTTP server")
     parser.add_argument("--host", default=os.environ.get("VIME_HTTP_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("VIME_HTTP_PORT", "51789")))
+    parser.add_argument(
+        "--port-retries",
+        type=int,
+        default=int(os.environ.get("VIME_HTTP_PORT_RETRIES", "100")),
+        help="Maximum number of incremental ports to try, starting from --port",
+    )
     args = parser.parse_args()
 
     vime = VimeServer()
-    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(vime))
-    logger.info("VIME HTTP server listening on %s:%s", args.host, args.port)
+    try:
+        httpd, bound_port = _bind_http_server(
+            args.host, args.port, args.port_retries, make_handler(vime)
+        )
+    except Exception as exc:
+        logger.error("Failed to bind HTTP server: %s", exc)
+        sys.exit(1)
+
+    logger.info("VIME HTTP server listening on %s:%s", args.host, bound_port)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

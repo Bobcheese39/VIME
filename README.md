@@ -62,8 +62,14 @@ You can also open a file from within Vim:
 The wrapper and plugin use these environment variables (optional):
 
 - `VIME_HTTP_HOST` (default: `127.0.0.1`)
-- `VIME_HTTP_PORT` (default: `51789`)
+- `VIME_HTTP_PORT` (default: `51789`, used as the starting port)
+- `VIME_HTTP_PORT_RETRIES` (default: `100`, number of incremental ports to try)
 - `VIME_PYTHON` (default: `python3` or `python` on Windows)
+
+When the backend starts, it first tries `VIME_HTTP_PORT`. If that port is in use,
+it increments by one until it finds an open port (up to `VIME_HTTP_PORT_RETRIES`
+attempts). This allows running multiple VIME instances concurrently without manual
+port changes.
 
 PowerShell helper:
 
