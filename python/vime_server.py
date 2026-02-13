@@ -2,8 +2,8 @@
 """
 VIME Server - Persistent Python backend for the VIME Vim H5 viewer.
 
-Communicates with Vim over stdin/stdout using the Vim JSON channel protocol.
-Protocol: Vim sends [msgid, {command}], server responds with [msgid, {result}].
+Communicates with Vim over HTTP using JSON request/response payloads.
+Protocol: Client sends POST requests with JSON payloads, server responds with JSON.
 
 Keeps HDF5 data in memory so files only need to be loaded once.
 """
@@ -14,11 +14,16 @@ import os
 import threading
 import time
 import logging
+import argparse
+import errno
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 from plotter import braille_plot
 import numpy as np
 from tabulate import tabulate
 from data_loader import DataLoader
 from test_compute import test_compute
+from config import Config
 
 
 
@@ -45,15 +50,21 @@ def configure_logging():
         return
     handler = logging.StreamHandler(sys.stderr)
     formatter = logging.Formatter(
-        "VIME %(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"
+        "VIME [%(levelname)s] %(asctime)s  %(message)s", "%H:%M:%S"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
 
+class VimeHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server with strict port exclusivity."""
+
+    allow_reuse_address = False
+
+
 class VimeServer:
-    """Persistent server that holds H5 data and responds to Vim commands."""
+    """Persistent server that holds H5 data and responds to HTTP requests."""
 
     def __init__(self):
         self.loader = DataLoader()
@@ -65,6 +76,12 @@ class VimeServer:
         self.compute_message = ""
         self.compute_table_name = None
         self.compute_error = None
+        self.config = None
+        try:
+            self.config = Config()
+            logger.info("Table config initialized")
+        except Exception as exc:
+            logger.warning("Table config disabled: %s", exc)
 
     # ------------------------------------------------------------------
     # Command dispatch
@@ -140,7 +157,7 @@ class VimeServer:
 
         name = payload.get("name", "")
         head = payload.get("head", 100)
-        fast = bool(payload.get("fast", True))
+        fast = bool(payload.get("fast", False))
         logger.info("Loading table: %s (head=%s fast=%s)", name, head, fast)
 
         if fast:
@@ -156,6 +173,7 @@ class VimeServer:
             logger.warning("Table not found: %s", name)
             return {"ok": False, "error": f"Table not found: {name}"}
 
+        df = self._apply_column_config(name, df)
         self.current_df = df
         self.current_table = name
 
@@ -284,10 +302,10 @@ class VimeServer:
         return {"ok": True, "content": "\n".join(lines)}
 
     def cmd_close(self, _payload):
-        """Close the store and exit."""
-        logger.info("Close requested, shutting down")
+        """Close the store (HTTP shutdown handled separately)."""
+        logger.info("Close requested")
         self._close_handles()
-        sys.exit(0)
+        return {"ok": True}
 
     def cmd_compute_start(self, _payload):
         """Start a background compute job using test_compute()."""
@@ -333,6 +351,24 @@ class VimeServer:
             return self.virtual_tables[name]["df"]
         logger.info("Loading table from store: %s", name)
         return self.loader.load_table(name)
+
+    def _apply_column_config(self, table_name, df):
+        """Apply configured column order/visibility for a table."""
+        if self.config is None:
+            return df
+
+        discovered = [str(col) for col in df.columns]
+        try:
+            configured = self.config.merge_table_columns(table_name, discovered)
+        except Exception as exc:
+            logger.warning("Failed to sync table config for %s: %s", table_name, exc)
+            return df
+
+        col_map = {str(col): col for col in df.columns}
+        ordered_actual = [col_map[col] for col in configured if col in col_map]
+        if not ordered_actual:
+            return df
+        return df.loc[:, ordered_actual]
 
     def _get_table_list(self):
         """Return a list of dicts with table metadata."""
@@ -423,59 +459,135 @@ class VimeServer:
 
 
 # ======================================================================
-# Main loop - Vim JSON channel protocol
+# HTTP server
 # ======================================================================
 
-def main():
-    """Main event loop: read JSON commands from stdin, write responses to stdout."""
-    configure_logging()
-    logger.info("VIME server starting")
-    server = VimeServer()
-
-    # Ensure stdout is unbuffered for reliable communication
+def _parse_request_json(handler):
+    length = int(handler.headers.get("Content-Length", "0") or "0")
+    if length <= 0:
+        return {}
+    raw = handler.rfile.read(length).decode("utf-8")
+    if not raw:
+        return {}
     try:
-        sys.stdout = os.fdopen(sys.stdout.fileno(), "w", buffering=1)
-    except (OSError, ValueError) as exc:
-        # If reopening fails (e.g., on Windows or restricted environments),
-        # continue with the existing stdout and rely on manual flushing
-        sys.stderr.write(f"VIME: Warning - could not reopen stdout: {exc}\n")
-        sys.stderr.write("VIME: Continuing with default stdout buffering\n")
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
-    for raw_line in sys.stdin:
-        raw_line = raw_line.strip()
-        if not raw_line:
-            continue
 
+def make_handler(vime_server):
+    class VimeHandler(BaseHTTPRequestHandler):
+        server_version = "VIMEHTTP/1.0"
+
+        def _send_json(self, status_code, payload):
+            body = json.dumps(payload, cls=NumpyEncoder).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _route_to_cmd(self, path):
+            routes = {
+                "/open": "open",
+                "/list": "list",
+                "/table": "table",
+                "/plot": "plot",
+                "/info": "info",
+                "/compute_start": "compute_start",
+                "/compute_status": "compute_status",
+                "/close": "close",
+                }
+            return routes.get(path)
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            if parsed.path == "/health":
+                self._send_json(200, {"ok": True})
+                return
+            self._send_json(404, {"ok": False, "error": "Not found"})
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            if parsed.path == "/shutdown":
+                logger.info("Shutdown requested via HTTP")
+                vime_server._close_handles()
+                self._send_json(200, {"ok": True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
+
+            cmd = self._route_to_cmd(parsed.path)
+            if cmd is None:
+                self._send_json(404, {"ok": False, "error": "Unknown route"})
+                return
+
+            payload = _parse_request_json(self)
+            if payload is None:
+                self._send_json(400, {"ok": False, "error": "Invalid JSON body"})
+                return
+
+            payload["cmd"] = cmd
+            response = vime_server.dispatch(payload)
+            self._send_json(200, response)
+
+        def log_message(self, fmt, *args):
+            logger.info("%s - %s", self.address_string(), fmt % args)
+
+    return VimeHandler
+
+
+def _bind_http_server(host, start_port, max_attempts, handler_cls):
+    """Bind HTTP server with incremental port fallback."""
+    attempts = max(1, int(max_attempts))
+    for offset in range(attempts):
+        port = start_port + offset
         try:
-            msg = json.loads(raw_line)
-        except json.JSONDecodeError:
-            logger.warning("Invalid JSON payload received")
-            continue
+            return VimeHTTPServer((host, port), handler_cls), port
+        except OSError as exc:
+            win_addr_in_use = getattr(errno, "WSAEADDRINUSE", 10048)
+            if exc.errno in (errno.EADDRINUSE, win_addr_in_use):
+                logger.info("Port %s already in use, trying %s", port, port + 1)
+                continue
+            raise
 
-        # Vim JSON channel protocol: [msgid, payload]
-        if not isinstance(msg, list) or len(msg) < 2:
-            logger.warning("Invalid message envelope received")
-            continue
+    end_port = start_port + attempts - 1
+    raise RuntimeError(
+        f"No open port found for {host} in range {start_port}-{end_port}"
+    )
 
-        msgid = msg[0]
-        payload = msg[1]
 
-        if not isinstance(payload, dict):
-            logger.warning("Payload is not a dict")
-            response = {"ok": False, "error": "Payload must be a dict"}
-        else:
-            response = server.dispatch(payload)
+def main():
+    configure_logging()
+    parser = argparse.ArgumentParser(description="VIME HTTP server")
+    parser.add_argument("--host", default=os.environ.get("VIME_HTTP_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("VIME_HTTP_PORT", "51789")))
+    parser.add_argument(
+        "--port-retries",
+        type=int,
+        default=int(os.environ.get("VIME_HTTP_PORT_RETRIES", "100")),
+        help="Maximum number of incremental ports to try, starting from --port",
+    )
+    args = parser.parse_args()
 
-        # Send response: [msgid, result]
-        try:
-            out = json.dumps([msgid, response], cls=NumpyEncoder)
-        except Exception as enc_err:
-            logger.exception("JSON encode error")
-            sys.stderr.write(f"VIME JSON encode error: {enc_err}\n")
-            out = json.dumps([msgid, {"ok": False,
-                                      "error": f"Internal encode error: {enc_err}"}])
-        sys.stdout.write(out + "\n")
-        sys.stdout.flush()
+    vime = VimeServer()
+    try:
+        httpd, bound_port = _bind_http_server(
+            args.host, args.port, args.port_retries, make_handler(vime)
+        )
+    except Exception as exc:
+        logger.error("Failed to bind HTTP server: %s", exc)
+        sys.exit(1)
+
+    logger.info("VIME HTTP server listening on %s:%s", args.host, bound_port)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("HTTP server interrupted, shutting down")
+    finally:
+        vime._close_handles()
+        httpd.server_close()
+        logger.info('goodbye!')
+
 
 
 if __name__ == "__main__":

@@ -1,0 +1,95 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_CMD="${VIME_PYTHON:-python3}"
+HOST="${VIME_HTTP_HOST:-127.0.0.1}"
+PORT_START="${VIME_HTTP_PORT:-51789}"
+PORT_RETRIES="${VIME_HTTP_PORT_RETRIES:-100}"
+STARTUP_WAIT_SECONDS="${VIME_SERVER_STARTUP_TIMEOUT:-30}"
+SERVER="${ROOT_DIR}/python/vime_server.py"
+ACTIVE_PORT="${PORT_START}"
+
+STARTED_BY_WRAPPER=0
+SERVER_PID=""
+
+is_healthy() {
+  local port="$1"
+  local health_url="http://${HOST}:${port}/health"
+  curl -sS "$health_url" >/dev/null 2>&1
+}
+
+wait_for_active_port() {
+  local checks=$((STARTUP_WAIT_SECONDS * 10))
+  for ((check = 0; check < checks; check++)); do
+    if is_healthy "$ACTIVE_PORT"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+if ! [[ "$PORT_RETRIES" =~ ^[0-9]+$ ]] || [ "$PORT_RETRIES" -lt 1 ]; then
+  PORT_RETRIES=100
+fi
+
+if ! [[ "$STARTUP_WAIT_SECONDS" =~ ^[0-9]+$ ]] || [ "$STARTUP_WAIT_SECONDS" -lt 1 ]; then
+  STARTUP_WAIT_SECONDS=30
+fi
+
+if ! is_healthy "$PORT_START"; then
+  "$PYTHON_CMD" "$SERVER" --host "$HOST" --port "$PORT_START" --port-retries "$PORT_RETRIES" >/dev/null 2>&1 &
+  SERVER_PID=$!
+  STARTED_BY_WRAPPER=1
+  startup_checks=$((STARTUP_WAIT_SECONDS * 10))
+  for ((check = 0; check < startup_checks; check++)); do
+    if ! kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+      break
+    fi
+    for ((offset = 0; offset < PORT_RETRIES; offset++)); do
+      candidate_port=$((PORT_START + offset))
+      if is_healthy "$candidate_port"; then
+        ACTIVE_PORT="$candidate_port"
+        break 2
+      fi
+    done
+    sleep 0.1
+  done
+
+  if ! is_healthy "$ACTIVE_PORT"; then
+    echo "VIME: backend did not become healthy within ${STARTUP_WAIT_SECONDS}s on ${HOST} ports ${PORT_START}-$((PORT_START + PORT_RETRIES - 1))" >&2
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+      kill "$SERVER_PID" >/dev/null 2>&1 || true
+    fi
+    exit 1
+  fi
+fi
+
+SHUTDOWN_URL="http://${HOST}:${ACTIVE_PORT}/shutdown"
+OWNER_ARGS=()
+if [ "$STARTED_BY_WRAPPER" -eq 1 ]; then
+  OWNER_ARGS+=(-c "let g:vime_owns_server=1")
+fi
+
+if ! wait_for_active_port; then
+  echo "VIME: backend did not become healthy within ${STARTUP_WAIT_SECONDS}s on ${HOST}:${ACTIVE_PORT}" >&2
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+    kill "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
+  exit 1
+fi
+
+vim \
+  --cmd "let g:vime_http_host='${HOST}'" \
+  --cmd "let g:vime_http_port=${ACTIVE_PORT}" \
+  "${OWNER_ARGS[@]}" \
+  "$@"
+
+if [ "$STARTED_BY_WRAPPER" -eq 1 ]; then
+  curl -sS -X POST "$SHUTDOWN_URL" >/dev/null 2>&1 || true
+  if kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+    sleep 0.5
+    kill "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
+fi
