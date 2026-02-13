@@ -1,0 +1,353 @@
+{
+  "project": "VIME",
+  "generated": "2025-02-12",
+  "summary": "Refactoring plan: modularization and complexity reduction for vime.vim and vime_server.py",
+
+  "phases": [
+    {
+      "phase": 1,
+      "title": "Quick wins — eliminate redundancy without restructuring",
+      "risk": "low",
+      "effort": "small",
+      "items": [
+        {
+          "id": "1a",
+          "title": "Extract CheckResponse() helper in vime.vim",
+          "description": "The same 6-line response-validation block is copy-pasted 5 times (OpenTableList, OpenTable, DoPlot, ListComputeStart, ShowInfo). Extract into a single reusable function.",
+          "files": ["plugin/vime.vim"],
+          "lines_affected": "~311-317, ~441-448, ~490-497, ~610-617, ~652-658",
+          "lines_saved": "~40",
+          "steps": [
+            "Add a new s:CheckResponse(resp, context) function that returns 1 on success, 0 on failure, and calls echoerr internally.",
+            "Replace each of the 5 validation blocks with: if !s:CheckResponse(l:resp, 'Failed to ...') | return | endif",
+            "Verify all 5 call sites still report the correct context-specific error message."
+          ]
+        },
+        {
+          "id": "1b",
+          "title": "Merge BackToList() and ListRefresh() — identical functions",
+          "description": "Both functions check s:current_file and call s:OpenTableList(s:current_file). They are byte-for-byte identical.",
+          "files": ["plugin/vime.vim"],
+          "lines_affected": "~415-419 (ListRefresh), ~676-680 (BackToList)",
+          "lines_saved": "~5",
+          "steps": [
+            "Delete s:ListRefresh() entirely.",
+            "Update the ,r keybinding in SetListKeybindings to call s:BackToList() instead.",
+            "Alternatively, keep one name and alias the other — but deleting the duplicate is cleaner."
+          ]
+        },
+        {
+          "id": "1c",
+          "title": "Extract wrap-and-render helper in vime.vim",
+          "description": "The 3-line pattern (split response content, WrapWithBorder, SetBufferContent) appears in OpenTable, DoPlot, and ShowInfo.",
+          "files": ["plugin/vime.vim"],
+          "lines_affected": "~503-506, ~619-622, ~661-664",
+          "lines_saved": "~10",
+          "steps": [
+            "Create s:RenderContent(resp_content) that does: split by newline, WrapWithBorder, SetBufferContent.",
+            "Replace the 3-line block in each of the 3 call sites with a single call to s:RenderContent()."
+          ]
+        },
+        {
+          "id": "1d",
+          "title": "Remove redundant ,pdb keybinding in CreateScratchBuffer",
+          "description": "CreateScratchBuffer sets nnoremap ,pdb on every buffer (line 137), but each buffer type's dedicated keybinding function also sets it or inherits it. The mapping in CreateScratchBuffer is redundant and confusing.",
+          "files": ["plugin/vime.vim"],
+          "lines_affected": "~137",
+          "lines_saved": "~1",
+          "steps": [
+            "Remove the nnoremap ,pdb line from s:CreateScratchBuffer().",
+            "Ensure each buffer type's keybinding function (SetListKeybindings, SetTableKeybindings, SetPlotKeybindings, SetDebugKeybindings, and the inline info buffer mappings) explicitly includes the ,pdb mapping.",
+            "This makes keybinding ownership explicit per buffer type."
+          ]
+        },
+        {
+          "id": "1e",
+          "title": "Remove Vim-side int-parsing of column references",
+          "description": "DoPlot in vime.vim pre-converts column strings to integers before sending to the server. The server's _resolve_column() already handles this. Dual parsing is redundant.",
+          "files": ["plugin/vime.vim"],
+          "lines_affected": "~590-591",
+          "lines_saved": "~2",
+          "steps": [
+            "In s:DoPlot(), remove the str2nr conversion. Send a:col1 and a:col2 as raw strings.",
+            "The server's _resolve_column() is the single source of truth for column resolution."
+          ]
+        },
+        {
+          "id": "1f",
+          "title": "Delete dead cmd_list from vime_server.py",
+          "description": "cmd_list() is never called by the Vim plugin — cmd_open() already returns the table list. The /list HTTP route and dispatch entry are dead code.",
+          "files": ["python/vime_server.py"],
+          "lines_affected": "~143-150 (cmd_list), ~96 (dispatch entry), ~494 (HTTP route)",
+          "lines_saved": "~10",
+          "steps": [
+            "Remove the cmd_list method from VimeServer.",
+            "Remove the 'list': self.cmd_list entry from the dispatch handlers dict.",
+            "Remove the '/list': 'list' entry from _route_to_cmd in the HTTP handler."
+          ]
+        },
+        {
+          "id": "1g",
+          "title": "Collapse dual routing tables in vime_server.py",
+          "description": "The HTTP handler's _route_to_cmd maps URL paths to command strings, then VimeServer.dispatch maps those strings to methods. Two routing tables that must be kept in sync.",
+          "files": ["python/vime_server.py"],
+          "lines_affected": "~90-112 (dispatch), ~491-502 (_route_to_cmd), ~519-531 (do_POST)",
+          "lines_saved": "~15",
+          "steps": [
+            "Option A (simpler): Make _route_to_cmd return the method reference directly instead of a string. Eliminate dispatch() and the cmd field injection in do_POST. The HTTP handler calls the method directly.",
+            "Option B (preserve dispatch): Remove _route_to_cmd, have do_POST extract the command name from the URL path (strip leading slash), inject it as payload['cmd'], and call dispatch(). One table instead of two.",
+            "Either option eliminates the synchronization burden."
+          ]
+        }
+      ]
+    },
+
+    {
+      "phase": 2,
+      "title": "Harden the compute subsystem and reduce logging noise",
+      "risk": "low",
+      "effort": "small-to-medium",
+      "items": [
+        {
+          "id": "2a",
+          "title": "Replace stringly-typed compute state with an enum and dataclass",
+          "description": "Compute state is tracked via 4 bare instance attributes using string comparisons ('idle', 'running', 'done', 'error'). This is fragile and invites typo bugs.",
+          "files": ["python/vime_server.py"],
+          "lines_affected": "~73-78, ~310-337, ~416-436, ~454-480 (vim polling logic references these states too)",
+          "steps": [
+            "Create a ComputeStatus enum: IDLE, RUNNING, DONE, ERROR.",
+            "Create a ComputeState dataclass with fields: status, message, table_name, error.",
+            "Replace self.compute_state / self.compute_message / self.compute_table_name / self.compute_error with a single self.compute = ComputeState().",
+            "Update cmd_compute_start, cmd_compute_status, and _run_compute_job to use the new types.",
+            "Serialize the enum's .value in the JSON response so the Vim-side status strings remain unchanged."
+          ]
+        },
+        {
+          "id": "2b",
+          "title": "Downgrade routine logging to DEBUG level",
+          "description": "Nearly every method logs on entry and on result at INFO level. During normal operation this is excessive noise that obscures meaningful state changes.",
+          "files": ["python/vime_server.py", "python/data_loader.py", "python/plotter.py", "python/config.py"],
+          "steps": [
+            "Audit all logger.info() calls. Keep INFO for: file open/close, server start/stop, compute start/done/error, actual errors.",
+            "Downgrade to logger.debug() for: per-request dispatch logging, per-table load, listing tables, plot generation details, config merge operations.",
+            "This keeps the log useful in production while still being available via --debug flag."
+          ]
+        },
+        {
+          "id": "2c",
+          "title": "Eliminate double health-check loop in scripts/vime",
+          "description": "The startup sequence has two redundant health-check loops: lines 46-58 scan ports to find which one bound, then line 75 calls wait_for_active_port again on the already-confirmed port.",
+          "files": ["scripts/vime"],
+          "lines_affected": "~41-67, ~75-81",
+          "steps": [
+            "After the port-scanning loop (lines 46-58) succeeds, skip the second wait_for_active_port call.",
+            "Move the wait_for_active_port call inside the if-block so it only runs when the server was NOT started by the wrapper (i.e., the server was pre-existing and we just need to confirm it's healthy).",
+            "Alternatively, restructure so there's a single wait-for-healthy function that handles both the 'just started' and 'already running' cases."
+          ]
+        }
+      ]
+    },
+
+    {
+      "phase": 3,
+      "title": "Split vime.vim into autoload modules",
+      "risk": "medium",
+      "effort": "medium",
+      "description": "Move the 791-line monolith into Vim's autoload structure. Each module loads on demand. This is the biggest structural change and should be done after phases 1-2 stabilize.",
+      "items": [
+        {
+          "id": "3a",
+          "title": "Create autoload directory structure",
+          "files_to_create": [
+            "autoload/vime/http.vim",
+            "autoload/vime/buffer.vim",
+            "autoload/vime/debug.vim",
+            "autoload/vime/colors.vim",
+            "autoload/vime/list.vim",
+            "autoload/vime/table.vim",
+            "autoload/vime/plot.vim",
+            "autoload/vime/info.vim",
+            "autoload/vime/nav.vim"
+          ],
+          "steps": [
+            "Create the autoload/vime/ directory.",
+            "Plan the shared-state strategy: either a vime#state dictionary or let each module own its relevant state with accessor functions.",
+            "Identify cross-module dependencies (e.g., list.vim needs http.vim and buffer.vim)."
+          ]
+        },
+        {
+          "id": "3b",
+          "title": "Extract autoload/vime/http.vim",
+          "description": "HTTP communication layer — lowest dependency, safest to extract first.",
+          "source_functions": ["s:StartServer", "s:StopServer", "s:Send", "s:BuildUrl", "s:CurlPost", "s:PingServer"],
+          "steps": [
+            "Move the 6 HTTP functions into autoload/vime/http.vim.",
+            "Rename: s:Send -> vime#http#send(), s:BuildUrl -> vime#http#build_url(), etc.",
+            "Update all callers in vime.vim to use the new autoload names.",
+            "Test: :VimeOpen should still work end-to-end."
+          ]
+        },
+        {
+          "id": "3c",
+          "title": "Extract autoload/vime/buffer.vim",
+          "description": "Generic buffer utilities shared across all buffer types.",
+          "source_functions": ["s:CreateScratchBuffer", "s:SetBufferContent", "s:WrapWithBorder", "s:RenderContent (from phase 1c)"],
+          "steps": [
+            "Move buffer helpers into autoload/vime/buffer.vim.",
+            "Rename: s:CreateScratchBuffer -> vime#buffer#create_scratch(), etc.",
+            "The s:current_file reference in CreateScratchBuffer needs to become a parameter or a module-level state accessor."
+          ]
+        },
+        {
+          "id": "3d",
+          "title": "Extract autoload/vime/colors.vim",
+          "description": "Highlight definitions and syntax application.",
+          "source_functions": ["s:DefineVimeHighlights", "s:ApplyVimeColors"],
+          "steps": [
+            "Move into autoload/vime/colors.vim.",
+            "plugin/vime.vim calls vime#colors#define() at load time.",
+            "Buffer creation functions call vime#colors#apply() after setting up content."
+          ]
+        },
+        {
+          "id": "3e",
+          "title": "Extract remaining view modules (list, table, plot, info, debug, nav)",
+          "description": "Each 'view' becomes its own autoload module.",
+          "steps": [
+            "Extract one at a time in dependency order: debug -> nav -> info -> plot -> table -> list.",
+            "Each module exposes public functions (e.g., vime#list#open, vime#table#open) and keeps keybinding setup internal.",
+            "Test after each extraction before moving to the next."
+          ]
+        },
+        {
+          "id": "3f",
+          "title": "Slim down plugin/vime.vim to entry point only",
+          "description": "After all extractions, plugin/vime.vim should contain only: load guard, commands, autocommands, and highlight initialization.",
+          "target_line_count": "~30-40 lines",
+          "steps": [
+            "Remove all moved functions from plugin/vime.vim.",
+            "Verify all :Vime* commands, autocommands, and keybindings still work.",
+            "Run through full workflow: open h5 -> list tables -> open table -> plot -> info -> quit."
+          ]
+        }
+      ]
+    },
+
+    {
+      "phase": 4,
+      "title": "Split vime_server.py into a package",
+      "risk": "medium",
+      "effort": "medium",
+      "description": "Break the VimeServer god-class into focused modules. Each command becomes independently testable.",
+      "items": [
+        {
+          "id": "4a",
+          "title": "Create server package structure",
+          "files_to_create": [
+            "python/server/__init__.py",
+            "python/server/app.py",
+            "python/server/http.py",
+            "python/server/commands/__init__.py",
+            "python/server/commands/open.py",
+            "python/server/commands/table.py",
+            "python/server/commands/plot.py",
+            "python/server/commands/info.py",
+            "python/server/commands/compute.py",
+            "python/server/formatters.py"
+          ],
+          "steps": [
+            "Create the python/server/ directory with __init__.py.",
+            "Plan the interface: each command module exports a function that takes (server_state, payload) and returns a response dict.",
+            "Define a shared ServerState object or protocol that commands can access (loader, current_df, config, etc.)."
+          ]
+        },
+        {
+          "id": "4b",
+          "title": "Extract server/http.py",
+          "description": "Move VimeHTTPServer, make_handler, _parse_request_json, _bind_http_server out of vime_server.py.",
+          "source_lines": "~60-64, ~458-556",
+          "steps": [
+            "Move the HTTP machinery into server/http.py.",
+            "make_handler takes a dispatch callable instead of a VimeServer instance.",
+            "vime_server.py imports from server.http and wires things together in main()."
+          ]
+        },
+        {
+          "id": "4c",
+          "title": "Extract server/formatters.py",
+          "description": "Move NumpyEncoder and _format_fast_table to a shared formatters module.",
+          "source_lines": "~30-43, ~388-403",
+          "steps": [
+            "Move NumpyEncoder class into server/formatters.py.",
+            "Move _format_fast_table into the same module.",
+            "Update imports in http.py (uses NumpyEncoder) and commands/table.py."
+          ]
+        },
+        {
+          "id": "4d",
+          "title": "Extract command modules one at a time",
+          "steps": [
+            "Start with commands/compute.py — it's the most self-contained (threading, state enum from phase 2a).",
+            "Then commands/plot.py — depends only on current_df and plotter.",
+            "Then commands/info.py — depends only on loader.",
+            "Then commands/table.py — depends on loader, config, and formatters.",
+            "Then commands/open.py — depends on loader.",
+            "Each command module exports a function: def handle(state, payload) -> dict.",
+            "server/app.py keeps dispatch() which routes to these functions."
+          ]
+        },
+        {
+          "id": "4e",
+          "title": "Slim down vime_server.py to entry point",
+          "description": "After extraction, vime_server.py should only contain: main(), configure_logging(), and arg parsing.",
+          "target_line_count": "~50-60 lines",
+          "steps": [
+            "Remove all moved code from vime_server.py.",
+            "main() creates ServerState, wires up dispatch, binds HTTP, and calls serve_forever.",
+            "Run full integration test: start server, open file via curl, fetch table, generate plot, run compute."
+          ]
+        }
+      ]
+    },
+
+    {
+      "phase": 5,
+      "title": "Cross-platform launcher rewrite",
+      "risk": "low-to-medium",
+      "effort": "small",
+      "description": "Replace the bash-only scripts/vime with a Python launcher for cross-platform support and to eliminate the curl dependency during startup.",
+      "items": [
+        {
+          "id": "5a",
+          "title": "Create Python launcher script",
+          "files_to_create": ["scripts/vime_launcher.py"],
+          "steps": [
+            "Rewrite the server startup, health polling, and port discovery logic in Python using urllib.request.",
+            "Handle server lifecycle: start if not running, find bound port, launch Vim with correct --cmd args.",
+            "Handle cleanup: send /shutdown on exit if wrapper started the server.",
+            "Support the same env vars: VIME_PYTHON, VIME_HTTP_HOST, VIME_HTTP_PORT, VIME_HTTP_PORT_RETRIES, VIME_SERVER_STARTUP_TIMEOUT."
+          ]
+        },
+        {
+          "id": "5b",
+          "title": "Update scripts/vime to delegate to Python launcher",
+          "files": ["scripts/vime"],
+          "steps": [
+            "Replace the bash script body with: exec python3 \"$(dirname \"$0\")/vime_launcher.py\" \"$@\"",
+            "Optionally create a scripts/vime.ps1 for native PowerShell support.",
+            "Test on both Linux/macOS (bash) and Windows (PowerShell)."
+          ]
+        }
+      ]
+    }
+  ],
+
+  "dependency_graph": {
+    "description": "Phases can overlap where noted. Items within a phase are generally independent.",
+    "phase_1": "No prerequisites. All items are independent of each other.",
+    "phase_2": "No prerequisites. Can be done in parallel with phase 1.",
+    "phase_3": "Depends on phase 1 (helpers extracted first make the autoload split cleaner). Items 3b-3e are sequential.",
+    "phase_4": "Depends on phase 2a (compute enum). Items 4b-4d are sequential.",
+    "phase_5": "Independent. Can be done at any time."
+  }
+}

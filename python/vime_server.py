@@ -50,7 +50,7 @@ def configure_logging():
         return
     handler = logging.StreamHandler(sys.stderr)
     formatter = logging.Formatter(
-        "VIME %(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"
+        "VIME [%(levelname)s] %(asctime)s  %(message)s", "%H:%M:%S"
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -586,6 +586,8 @@ def main():
     finally:
         vime._close_handles()
         httpd.server_close()
+        logger.info('goodbye!')
+
 
 
 if __name__ == "__main__":
