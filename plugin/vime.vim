@@ -110,6 +110,18 @@ function! s:PingServer() abort
     return 1
 endfunction
 
+function! s:CheckResponse(resp, context) abort
+    if type(a:resp) != v:t_dict
+        echoerr 'VIME: ' . a:context . ' (server returned unexpected response)'
+        return 0
+    endif
+    if !get(a:resp, 'ok', 0)
+        echoerr 'VIME: ' . get(a:resp, 'error', a:context)
+        return 0
+    endif
+    return 1
+endfunction
+
 " ======================================================================
 " Buffer helpers
 " ======================================================================
@@ -134,7 +146,6 @@ function! s:CreateScratchBuffer(name, type, ...) abort
     execute 'file ' . fnameescape(a:name)
     let b:vime_type = a:type
     let b:vime_file = s:current_file
-    nnoremap <buffer> <silent> ,pdb :call <SID>ToggleDebugBuffer()<CR>
 endfunction
 
 function! s:SetBufferContent(lines) abort
@@ -143,6 +154,12 @@ function! s:SetBufferContent(lines) abort
     call setline(1, a:lines)
     setlocal nomodifiable
     normal! gg
+endfunction
+
+function! s:RenderContent(content) abort
+    let l:lines = split(a:content, "\n")
+    let l:lines = s:WrapWithBorder(l:lines)
+    call s:SetBufferContent(l:lines)
 endfunction
 
 function! s:WrapWithBorder(lines) abort
@@ -308,12 +325,7 @@ function! s:OpenTableList(filepath) abort
     let s:current_file = a:filepath
     let l:resp = s:Send({'cmd': 'open', 'file': a:filepath})
 
-    if type(l:resp) != v:t_dict
-        echoerr 'VIME: Failed to open file (server returned unexpected response)'
-        return
-    endif
-    if !get(l:resp, 'ok', 0)
-        echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to open file')
+    if !s:CheckResponse(l:resp, 'Failed to open file')
         return
     endif
 
@@ -360,8 +372,9 @@ function! s:SetListKeybindings() abort
     nnoremap <buffer> <silent> ,gh :call <SID>ListSelectTable('h')<CR>
     nnoremap <buffer> <silent> ,s :call <SID>OpenConfig()<CR>
     nnoremap <buffer> <silent> ,i :call <SID>ListTableInfo()<CR>
-    nnoremap <buffer> <silent> ,r :call <SID>ListRefresh()<CR>
+    nnoremap <buffer> <silent> ,r :call <SID>BackToList()<CR>
     nnoremap <buffer> <silent> ,c :call <SID>ListComputeStart()<CR>
+    nnoremap <buffer> <silent> ,pdb :call <SID>ToggleDebugBuffer()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>VimeQuit()<CR>
 endfunction
 
@@ -410,12 +423,6 @@ function! s:ListTableInfo() abort
         return
     endif
     call s:ShowInfo(l:name)
-endfunction
-
-function! s:ListRefresh() abort
-    if s:current_file !=# ''
-        call s:OpenTableList(s:current_file)
-    endif
 endfunction
 
 function! s:SetListStatus(msg) abort
@@ -487,12 +494,7 @@ function! s:OpenTable(name, head, ...) abort
     let l:split = a:0 >= 1 ? a:1 : ''
     let l:resp = s:Send({'cmd': 'table', 'name': a:name, 'head': a:head})
 
-    if type(l:resp) != v:t_dict
-        echoerr 'VIME: Failed to read table (server returned unexpected response)'
-        return
-    endif
-    if !get(l:resp, 'ok', 0)
-        echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to read table')
+    if !s:CheckResponse(l:resp, 'Failed to read table')
         return
     endif
 
@@ -500,10 +502,7 @@ function! s:OpenTable(name, head, ...) abort
     let b:vime_table_name = a:name
     let b:vime_columns = get(l:resp, 'columns', [])
 
-    let l:lines = split(l:resp['content'], "\n")
-    let l:lines = s:WrapWithBorder(l:lines)
-
-    call s:SetBufferContent(l:lines)
+    call s:RenderContent(l:resp['content'])
     call s:SetTableKeybindings()
     setlocal laststatus=2
     setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Close%=
@@ -520,6 +519,7 @@ function! s:SetTableKeybindings() abort
     nnoremap <buffer> <silent> ,h :call <SID>TableHead()<CR>
     nnoremap <buffer> <silent> ,a :call <SID>TableAll()<CR>
     nnoremap <buffer> <silent> ,i :call <SID>TableInfoCurrent()<CR>
+    nnoremap <buffer> <silent> ,pdb :call <SID>ToggleDebugBuffer()<CR>
 endfunction
 
 function! s:TablePlotPrompt(...) abort
@@ -586,10 +586,6 @@ function! s:DoPlot(col1, col2, plot_type, ...) abort
     let l:orig_winid = win_getid()
     let l:orig_bufnr = bufnr('%')
 
-    " Try to convert to integers if they look numeric
-    let l:c1 = a:col1 =~# '^\d\+$' ? str2nr(a:col1) : a:col1
-    let l:c2 = a:col2 =~# '^\d\+$' ? str2nr(a:col2) : a:col2
-
     " Create the buffer first so we can measure the window size
     call s:CreateScratchBuffer('VIME:plot', 'plot', l:split)
 
@@ -601,25 +597,17 @@ function! s:DoPlot(col1, col2, plot_type, ...) abort
 
     let l:resp = s:Send({
         \ 'cmd': 'plot',
-        \ 'cols': [l:c1, l:c2],
+        \ 'cols': [a:col1, a:col2],
         \ 'type': a:plot_type,
         \ 'width': l:plot_width,
         \ 'height': l:plot_height,
         \ })
 
-    if type(l:resp) != v:t_dict
-        echoerr 'VIME: Failed to generate plot (server returned unexpected response)'
-        return
-    endif
-    if !get(l:resp, 'ok', 0)
-        echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to generate plot')
+    if !s:CheckResponse(l:resp, 'Failed to generate plot')
         return
     endif
 
-    let l:lines = split(l:resp['content'], "\n")
-    let l:lines = s:WrapWithBorder(l:lines)
-
-    call s:SetBufferContent(l:lines)
+    call s:RenderContent(l:resp['content'])
     call s:SetPlotKeybindings()
     let b:vime_prev_laststatus = &laststatus
     setlocal statusline=
@@ -639,6 +627,7 @@ function! s:SetPlotKeybindings() abort
     nnoremap <buffer> <silent> ,b :call <SID>BackToTable()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
     nnoremap <buffer> <silent> ,pq :call <SID>CloseBuf()<CR>
+    nnoremap <buffer> <silent> ,pdb :call <SID>ToggleDebugBuffer()<CR>
 endfunction
 
 " ======================================================================
@@ -648,21 +637,14 @@ endfunction
 function! s:ShowInfo(name) abort
     let l:resp = s:Send({'cmd': 'info', 'name': a:name})
 
-    if type(l:resp) != v:t_dict
-        echoerr 'VIME: Failed to get info (server returned unexpected response)'
-        return
-    endif
-    if !get(l:resp, 'ok', 0)
-        echoerr 'VIME: ' . get(l:resp, 'error', 'Failed to get info')
+    if !s:CheckResponse(l:resp, 'Failed to get info')
         return
     endif
 
     call s:CreateScratchBuffer('VIME:info:' . a:name, 'info')
-    let l:lines = split(l:resp['content'], "\n")
-    let l:lines = s:WrapWithBorder(l:lines)
-
-    call s:SetBufferContent(l:lines)
+    call s:RenderContent(l:resp['content'])
     nnoremap <buffer> <silent> ,b :call <SID>BackToList()<CR>
+    nnoremap <buffer> <silent> ,pdb :call <SID>ToggleDebugBuffer()<CR>
     nnoremap <buffer> <silent> ,q :call <SID>CloseBuf()<CR>
     setlocal laststatus=2
     setlocal statusline=%#VimeFooter#\ \ ,b\ Back\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Close%=

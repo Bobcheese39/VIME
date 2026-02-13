@@ -93,7 +93,6 @@ class VimeServer:
         logger.info("Dispatch command: %s", cmd)
         handlers = {
             "open": self.cmd_open,
-            "list": self.cmd_list,
             "table": self.cmd_table,
             "plot": self.cmd_plot,
             "info": self.cmd_info,
@@ -139,15 +138,6 @@ class VimeServer:
             return {"ok": False, "error": str(exc)}
         logger.info("File opened: %s", filepath)
         return {"ok": True, "tables": self._get_table_list()}
-
-    def cmd_list(self, _payload):
-        """Return the list of tables in the currently open file."""
-        if not self.loader.is_open:
-            logger.warning("List requested with no file open")
-            return {"ok": False, "error": "No file open"}
-        tables = self._get_table_list()
-        logger.info("Listed %d tables", len(tables))
-        return {"ok": True, "tables": tables}
 
     def cmd_table(self, payload):
         """Read a table and return its formatted content."""
@@ -488,18 +478,6 @@ def make_handler(vime_server):
             self.end_headers()
             self.wfile.write(body)
 
-        def _route_to_cmd(self, path):
-            routes = {
-                "/open": "open",
-                "/list": "list",
-                "/table": "table",
-                "/plot": "plot",
-                "/info": "info",
-                "/compute_start": "compute_start",
-                "/compute_status": "compute_status",
-                "/close": "close",
-                }
-            return routes.get(path)
         def do_GET(self):
             parsed = urlparse(self.path)
             if parsed.path == "/health":
@@ -516,8 +494,8 @@ def make_handler(vime_server):
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
 
-            cmd = self._route_to_cmd(parsed.path)
-            if cmd is None:
+            cmd = parsed.path.lstrip("/")
+            if not cmd:
                 self._send_json(404, {"ok": False, "error": "Unknown route"})
                 return
 
