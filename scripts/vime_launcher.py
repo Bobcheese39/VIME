@@ -10,6 +10,8 @@ Replaces the original bash-only scripts/vime wrapper and eliminates
 the curl dependency during startup.
 """
 
+import argparse
+import logging
 import os
 import subprocess
 import sys
@@ -37,6 +39,42 @@ def _safe_int(value, default, minimum=1):
 PORT_START = _safe_int(os.environ.get("VIME_HTTP_PORT", "51789"), 51789, minimum=1)
 PORT_RETRIES = _safe_int(os.environ.get("VIME_HTTP_PORT_RETRIES", "100"), 100)
 STARTUP_TIMEOUT = _safe_int(os.environ.get("VIME_SERVER_STARTUP_TIMEOUT", "30"), 30)
+
+logger = logging.getLogger("vime.launcher")
+
+
+# ── Argument parsing ──────────────────────────────────────────────────
+
+
+def parse_args():
+    """Parse launcher arguments; return (args, vim_args)."""
+    parser = argparse.ArgumentParser(
+        description="VIME launcher",
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "-d", "--debug", action="store_true",
+        help="Enable DEBUG logging and write to debug.txt",
+    )
+    return parser.parse_known_args()
+
+
+def configure_debug_logging():
+    """Set up DEBUG-level logging to stderr and to ROOT_DIR/debug.txt."""
+    formatter = logging.Formatter(
+        "VIME [%(levelname)s] %(asctime)s  %(message)s", "%H:%M:%S"
+    )
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setFormatter(formatter)
+
+    file_handler = logging.FileHandler(
+        os.path.join(ROOT_DIR, "debug.txt"), mode="w",
+    )
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(stderr_handler)
+    logger.addHandler(file_handler)
+    logger.setLevel(logging.DEBUG)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -78,7 +116,7 @@ def send_shutdown(port):
 # ── Server lifecycle ───────────────────────────────────────────────────
 
 
-def start_server():
+def start_server(debug=False):
     """Launch ``vime_server.py`` in the background and return the Popen handle."""
     cmd = [
         PYTHON_CMD,
@@ -87,10 +125,12 @@ def start_server():
         "--port", str(PORT_START),
         "--port-retries", str(PORT_RETRIES),
     ]
-    kwargs = dict(
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    if debug:
+        cmd.append("--debug")
+    kwargs = {}
+    if not debug:
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
     # On Windows, create the server in a new process group so Ctrl-C
     # delivered to the Vim console is not forwarded to the server.
     if sys.platform == "win32":
@@ -131,6 +171,11 @@ def terminate_server(server_proc):
 
 
 def main():
+    args, vim_args = parse_args()
+    if args.debug:
+        configure_debug_logging()
+        logger.debug("Debug mode enabled")
+
     started_by_wrapper = False
     server_proc = None
     active_port = PORT_START
@@ -141,7 +186,7 @@ def main():
         active_port = existing
     else:
         # 2. Start the server in the background.
-        server_proc = start_server()
+        server_proc = start_server(debug=args.debug)
         started_by_wrapper = True
 
         # 3. Wait for the server to bind and become healthy.
@@ -165,7 +210,7 @@ def main():
     ]
     if started_by_wrapper:
         vim_cmd += ["-c", "let g:vime_owns_server=1"]
-    vim_cmd += sys.argv[1:]  # pass through extra arguments
+    vim_cmd += vim_args  # pass through extra arguments
 
     # 5. Launch Vim (blocking).
     vim_exit = 1

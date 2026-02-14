@@ -16,21 +16,27 @@ import argparse
 logger = logging.getLogger("vime")
 
 
-def configure_logging():
+def configure_logging(debug=False):
     if logger.handlers:
         return
-    handler = logging.StreamHandler(sys.stderr)
     formatter = logging.Formatter(
         "VIME [%(levelname)s] %(asctime)s  %(message)s", "%H:%M:%S"
     )
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+
+    if debug:
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        fh = logging.FileHandler(os.path.join(root_dir, "debug.txt"), mode="w")
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
 
 
 def main():
-    configure_logging()
-
     parser = argparse.ArgumentParser(description="VIME HTTP server")
     parser.add_argument("--host", default=os.environ.get("VIME_HTTP_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("VIME_HTTP_PORT", "51789")))
@@ -40,7 +46,13 @@ def main():
         default=int(os.environ.get("VIME_HTTP_PORT_RETRIES", "100")),
         help="Maximum number of incremental ports to try, starting from --port",
     )
+    parser.add_argument(
+        "-d", "--debug", action="store_true",
+        help="Enable DEBUG logging and write to debug.txt",
+    )
     args = parser.parse_args()
+
+    configure_logging(debug=args.debug)
 
     from server.state import ServerState
     from server.app import dispatch
