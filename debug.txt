@@ -1,0 +1,166 @@
+VIME [DEBUG] 20:37:30  Loaded table config: /home/admino/Documents/coding/VIME/config.json (9 tables)
+VIME [INFO] 20:37:30  Table config initialized
+VIME [INFO] 20:37:30  Port 51789 already in use, trying 51790
+VIME [INFO] 20:37:30  Port 51790 already in use, trying 51791
+VIME [INFO] 20:37:30  VIME HTTP server listening on 127.0.0.1:51791
+VIME [DEBUG] 20:37:30  127.0.0.1 - "GET /health HTTP/1.1" 200 -
+VIME [DEBUG] 20:37:30  127.0.0.1 - "GET /health HTTP/1.1" 200 -
+VIME [DEBUG] 20:37:30  Dispatch command: open
+VIME [INFO] 20:37:30  Opening file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:37:30  Closing open file handles
+VIME [INFO] 20:37:30  Closing data handles
+VIME [INFO] 20:37:30  Opening HDF5 file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:37:30  Closing data handles
+VIME [INFO] 20:37:30  Opened with pandas backend (869 tables)
+VIME [DEBUG] 20:37:30  Listing tables (backend=pandas)
+VIME [DEBUG] 20:37:32  Collected 869 pandas tables
+VIME [INFO] 20:37:32  File opened: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [DEBUG] 20:37:32  Listing tables (backend=pandas)
+VIME [DEBUG] 20:37:35  Collected 869 pandas tables
+VIME [DEBUG] 20:37:35  127.0.0.1 - "POST /open HTTP/1.1" 200 -
+VIME [DEBUG] 20:37:38  Dispatch command: table
+VIME [DEBUG] 20:37:38  Loading table: /WS_0/data (head=100 fast=False)
+VIME [DEBUG] 20:37:38  Loading table from store: /WS_0/data
+VIME [DEBUG] 20:37:38  Loading table: /WS_0/data (backend=pandas)
+VIME [DEBUG] 20:37:38  Loaded table: /WS_0/data (rows=27184 cols=1)
+VIME [DEBUG] 20:37:38  127.0.0.1 - "POST /table HTTP/1.1" 200 -
+VIME [DEBUG] 20:37:40  Dispatch command: table
+VIME [DEBUG] 20:37:40  Loading table: /WS_0/data (head=0 fast=False)
+VIME [DEBUG] 20:37:40  Loading table from store: /WS_0/data
+VIME [DEBUG] 20:37:40  Loading table: /WS_0/data (backend=pandas)
+VIME [DEBUG] 20:37:41  Loaded table: /WS_0/data (rows=27184 cols=1)
+VIME [DEBUG] 20:37:41  127.0.0.1 - "POST /table HTTP/1.1" 200 -
+VIME [DEBUG] 20:37:43  127.0.0.1 - "GET /health HTTP/1.1" 200 -
+VIME [DEBUG] 20:37:43  Dispatch command: open
+VIME [INFO] 20:37:43  Opening file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:37:43  Closing open file handles
+VIME [INFO] 20:37:43  Closing data handles
+VIME [INFO] 20:37:43  Opening HDF5 file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:37:43  Closing data handles
+VIME [INFO] 20:37:43  Opened with pandas backend (869 tables)
+VIME [DEBUG] 20:37:43  Listing tables (backend=pandas)
+VIME [DEBUG] 20:37:45  Collected 869 pandas tables
+VIME [INFO] 20:37:45  File opened: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [DEBUG] 20:37:45  Listing tables (backend=pandas)
+VIME [DEBUG] 20:37:47  Collected 869 pandas tables
+VIME [DEBUG] 20:37:47  127.0.0.1 - "POST /open HTTP/1.1" 200 -
+VIME [DEBUG] 20:38:03  Dispatch command: compute_start
+VIME [INFO] 20:38:03  Compute job started
+VIME [INFO] 20:38:03  Compute thread started
+VIME [ERROR] 20:38:03  Compute job failed
+Traceback (most recent call last):
+  File "/home/admino/Documents/coding/VIME/python/server/commands/compute.py", line 45, in _run_compute_job
+    df = test_compute()
+         ^^^^^^^^^^^^^^
+  File "/home/admino/Documents/coding/VIME/python/test_compute.py", line 8, in test_compute
+    df = pd.DataFrame({"x": x, "y": y, "z": z}, index='x')
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/frame.py", line 769, in __init__
+    mgr = dict_to_mgr(data, index, columns, dtype=dtype, copy=copy)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/internals/construction.py", line 447, in dict_to_mgr
+    return arrays_to_mgr(arrays, columns, index, dtype=dtype, consolidate=copy)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/internals/construction.py", line 114, in arrays_to_mgr
+    index = ensure_index(index)
+            ^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 7975, in ensure_index
+    return Index(index_like, copy=copy)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 541, in __new__
+    raise cls._raise_scalar_data_error(data)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 5280, in _raise_scalar_data_error
+    raise TypeError(
+TypeError: Index(...) must be called with a collection of some kind, 'x' was passed
+VIME [DEBUG] 20:38:03  127.0.0.1 - "POST /compute_start HTTP/1.1" 200 -
+VIME [DEBUG] 20:38:04  Dispatch command: compute_status
+VIME [DEBUG] 20:38:04  Compute status requested: error
+VIME [DEBUG] 20:38:04  127.0.0.1 - "POST /compute_status HTTP/1.1" 200 -
+VIME [DEBUG] 20:38:09  127.0.0.1 - "GET /health HTTP/1.1" 200 -
+VIME [DEBUG] 20:38:09  Dispatch command: open
+VIME [INFO] 20:38:09  Opening file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:38:09  Closing open file handles
+VIME [INFO] 20:38:09  Closing data handles
+VIME [INFO] 20:38:09  Opening HDF5 file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:38:09  Closing data handles
+VIME [INFO] 20:38:10  Opened with pandas backend (869 tables)
+VIME [DEBUG] 20:38:10  Listing tables (backend=pandas)
+VIME [DEBUG] 20:38:12  Collected 869 pandas tables
+VIME [INFO] 20:38:12  File opened: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [DEBUG] 20:38:12  Listing tables (backend=pandas)
+VIME [DEBUG] 20:38:14  Collected 869 pandas tables
+VIME [DEBUG] 20:38:14  127.0.0.1 - "POST /open HTTP/1.1" 200 -
+VIME [DEBUG] 20:38:22  Dispatch command: compute_start
+VIME [INFO] 20:38:22  Compute job started
+VIME [INFO] 20:38:22  Compute thread started
+VIME [ERROR] 20:38:22  Compute job failed
+Traceback (most recent call last):
+  File "/home/admino/Documents/coding/VIME/python/server/commands/compute.py", line 45, in _run_compute_job
+    df = test_compute()
+         ^^^^^^^^^^^^^^
+  File "/home/admino/Documents/coding/VIME/python/test_compute.py", line 8, in test_compute
+    df = pd.DataFrame({"x": x, "y": y, "z": z}, index='x')
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/frame.py", line 769, in __init__
+    mgr = dict_to_mgr(data, index, columns, dtype=dtype, copy=copy)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/internals/construction.py", line 447, in dict_to_mgr
+    return arrays_to_mgr(arrays, columns, index, dtype=dtype, consolidate=copy)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/internals/construction.py", line 114, in arrays_to_mgr
+    index = ensure_index(index)
+            ^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 7975, in ensure_index
+    return Index(index_like, copy=copy)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 541, in __new__
+    raise cls._raise_scalar_data_error(data)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/admino/.local/lib/python3.12/site-packages/pandas/core/indexes/base.py", line 5280, in _raise_scalar_data_error
+    raise TypeError(
+TypeError: Index(...) must be called with a collection of some kind, 'x' was passed
+VIME [DEBUG] 20:38:22  127.0.0.1 - "POST /compute_start HTTP/1.1" 200 -
+VIME [DEBUG] 20:38:23  Dispatch command: compute_status
+VIME [DEBUG] 20:38:23  Compute status requested: error
+VIME [DEBUG] 20:38:23  127.0.0.1 - "POST /compute_status HTTP/1.1" 200 -
+VIME [DEBUG] 20:38:36  Dispatch command: info
+VIME [DEBUG] 20:38:36  Info requested for table: /WS_0/data
+VIME [DEBUG] 20:38:36  Loading table from store: /WS_0/data
+VIME [DEBUG] 20:38:36  Loading table: /WS_0/data (backend=pandas)
+VIME [DEBUG] 20:38:36  127.0.0.1 - "POST /info HTTP/1.1" 200 -
+VIME [DEBUG] 20:40:27  127.0.0.1 - "GET /health HTTP/1.1" 200 -
+VIME [DEBUG] 20:40:27  Dispatch command: open
+VIME [INFO] 20:40:27  Opening file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:40:27  Closing open file handles
+VIME [INFO] 20:40:27  Closing data handles
+VIME [INFO] 20:40:27  Opening HDF5 file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:40:27  Closing data handles
+VIME [INFO] 20:40:27  Opened with pandas backend (869 tables)
+VIME [DEBUG] 20:40:27  Listing tables (backend=pandas)
+VIME [DEBUG] 20:40:29  Collected 869 pandas tables
+VIME [INFO] 20:40:29  File opened: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [DEBUG] 20:40:29  Listing tables (backend=pandas)
+VIME [DEBUG] 20:40:31  Collected 869 pandas tables
+VIME [DEBUG] 20:40:31  127.0.0.1 - "POST /open HTTP/1.1" 200 -
+VIME [DEBUG] 20:40:52  127.0.0.1 - "GET /health HTTP/1.1" 200 -
+VIME [DEBUG] 20:40:52  Dispatch command: open
+VIME [INFO] 20:40:52  Opening file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:40:52  Closing open file handles
+VIME [INFO] 20:40:52  Closing data handles
+VIME [INFO] 20:40:52  Opening HDF5 file: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [INFO] 20:40:52  Closing data handles
+VIME [INFO] 20:40:52  Opened with pandas backend (869 tables)
+VIME [DEBUG] 20:40:52  Listing tables (backend=pandas)
+VIME [DEBUG] 20:40:55  Collected 869 pandas tables
+VIME [INFO] 20:40:55  File opened: /home/admino/Documents/coding/datasets/nasa/666200402020911.h5
+VIME [DEBUG] 20:40:55  Listing tables (backend=pandas)
+VIME [DEBUG] 20:40:57  Collected 869 pandas tables
+VIME [DEBUG] 20:40:57  127.0.0.1 - "POST /open HTTP/1.1" 200 -
+VIME [INFO] 20:40:57  Shutdown requested via HTTP
+VIME [INFO] 20:40:57  Closing open file handles
+VIME [INFO] 20:40:57  Closing data handles
+VIME [DEBUG] 20:40:57  127.0.0.1 - "POST /shutdown HTTP/1.1" 200 -
+VIME [INFO] 20:40:57  Closing open file handles
+VIME [INFO] 20:40:57  Closing data handles
+VIME [INFO] 20:40:57  goodbye!
