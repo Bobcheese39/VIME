@@ -16,13 +16,41 @@ function! vime#list#open(filepath) abort
         return
     endif
 
-    call vime#state#set('current_file', a:filepath)
     let l:resp = vime#http#send({'cmd': 'open', 'file': a:filepath})
 
     if !vime#http#check_response(l:resp, 'Failed to open file')
         return
     endif
 
+    call vime#state#set('current_file', a:filepath)
+    call s:render_table_list(a:filepath, l:resp['tables'])
+endfunction
+
+function! vime#list#refresh(...) abort
+    let l:file = a:0 >= 1 ? a:1 : vime#state#get('current_file')
+    if l:file ==# ''
+        echo 'VIME: No file open'
+        return
+    endif
+    if !vime#http#start_server()
+        return
+    endif
+
+    let l:resp = vime#http#send({'cmd': 'list_tables', 'file': l:file})
+    if type(l:resp) == v:t_dict && get(l:resp, 'ok', 0)
+        call s:render_table_list(l:file, l:resp['tables'])
+        return
+    endif
+
+    let l:code = type(l:resp) == v:t_dict ? get(l:resp, 'code', '') : ''
+    if l:code ==# 'no_file_open' || l:code ==# 'file_mismatch'
+        call vime#list#open(l:file)
+        return
+    endif
+    call vime#http#check_response(l:resp, 'Failed to refresh table list')
+endfunction
+
+function! s:render_table_list(filepath, tables) abort
     " Create the table list buffer
     call vime#buffer#create_scratch('VIME:' . fnamemodify(a:filepath, ':t'), 'list')
 
@@ -39,7 +67,7 @@ function! vime#list#open(filepath) abort
 
     let b:vime_table_map = {}
     let l:idx = 0
-    for l:tbl in l:resp['tables']
+    for l:tbl in a:tables
         let l:name = l:tbl['name']
         let l:rows = l:tbl['rows']
         let l:cols = l:tbl['cols']
@@ -70,7 +98,7 @@ function! s:set_keybindings() abort
     nnoremap <buffer> <silent> ,gh :call <SID>select_table('h')<CR>
     nnoremap <buffer> <silent> ,s :call <SID>open_config()<CR>
     nnoremap <buffer> <silent> ,i :call <SID>table_info()<CR>
-    nnoremap <buffer> <silent> ,r :call vime#nav#back_to_list()<CR>
+    nnoremap <buffer> <silent> ,r :call vime#list#refresh()<CR>
     nnoremap <buffer> <silent> ,c :call <SID>compute_start()<CR>
     nnoremap <buffer> <silent> ,pdb :call vime#debug#toggle()<CR>
     nnoremap <buffer> <silent> ,q :call vime#nav#quit()<CR>
@@ -173,7 +201,7 @@ function! s:compute_poll(timer_id) abort
     if l:status ==# 'done'
         let l:name = get(l:resp, 'table', '')
         call s:stop_compute_timer()
-        call vime#list#open(vime#state#get('current_file'))
+        call vime#list#refresh(vime#state#get('current_file'))
         let l:msg = l:name ==# '' ? 'Compute done' : ('Compute done: ' . l:name)
         call s:set_status(l:msg)
         return

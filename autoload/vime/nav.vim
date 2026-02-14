@@ -6,7 +6,7 @@ scriptencoding utf-8
 function! vime#nav#back_to_list() abort
     let l:file = vime#state#get('current_file')
     if l:file !=# ''
-        call vime#list#open(l:file)
+        call vime#list#refresh(l:file)
     endif
 endfunction
 

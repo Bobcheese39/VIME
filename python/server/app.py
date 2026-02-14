@@ -3,6 +3,7 @@
 import logging
 
 from server.commands import open as cmd_open
+from server.commands import list_tables as cmd_list_tables
 from server.commands import table as cmd_table
 from server.commands import plot as cmd_plot
 from server.commands import info as cmd_info
@@ -24,6 +25,7 @@ def dispatch(state, payload):
     logger.debug("Dispatch command: %s", cmd)
     handlers = {
         "open": cmd_open.handle,
+        "list_tables": cmd_list_tables.handle,
         "table": cmd_table.handle,
         "plot": cmd_plot.handle,
         "info": cmd_info.handle,
