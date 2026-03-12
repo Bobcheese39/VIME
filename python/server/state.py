@@ -11,20 +11,32 @@ from config import Config
 logger = logging.getLogger("vime")
 
 
-class ComputeStatus(Enum):
-    """Possible states for a background compute job."""
+class JobStatus(Enum):
+    """Possible states for a background job (compute, plot, etc.)."""
     IDLE = "idle"
     RUNNING = "running"
     DONE = "done"
     ERROR = "error"
 
 
+ComputeStatus = JobStatus
+
+
 @dataclass
 class ComputeState:
     """Snapshot of a background compute job's progress."""
-    status: ComputeStatus = ComputeStatus.IDLE
+    status: JobStatus = JobStatus.IDLE
     message: str = ""
     table_name: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class PlotState:
+    """Snapshot of a background plot job's progress."""
+    status: JobStatus = JobStatus.IDLE
+    message: str = ""
+    content: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -38,6 +50,8 @@ class ServerState:
         self.virtual_tables = {}   # Virtual tables created by compute jobs
         self.compute_thread = None
         self.compute = ComputeState()
+        self.plot_thread = None
+        self.plot = PlotState()
         self.config = None
         try:
             self.config = Config()

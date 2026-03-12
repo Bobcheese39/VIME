@@ -30,6 +30,8 @@ def dispatch(state, payload):
         "plot": cmd_plot.handle,
         "info": cmd_info.handle,
         "close": _handle_close,
+        "plot_start": cmd_plot.handle_start,
+        "plot_status": cmd_plot.handle_status,
         "compute_start": cmd_compute.handle_start,
         "compute_status": cmd_compute.handle_status,
     }
