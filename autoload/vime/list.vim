@@ -84,7 +84,7 @@ function! s:render_table_list(filepath, tables) abort
     setlocal laststatus=2
     let b:vime_status = ''
     let s:list_bufnr = bufnr('%')
-    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,gv\ V-Open\ \ │\ \ ,gh\ H-Open\ \ │\ \ ,s\ Config\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,c\ Compute\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Quit%=%{get(b:,'vime_status','')}
+    setlocal statusline=%#VimeFooter#\ \ ⏎\ Open\ \ │\ \ ,gv\ V-Open\ \ │\ \ ,gh\ H-Open\ \ │\ \ ,s\ Config\ \ │\ \ ,i\ Info\ \ │\ \ ,r\ Refresh\ \ │\ \ ,c\ Compute\ \ │\ \ ,q\ Quit%=%{get(b:,'vime_status','')}
     call vime#colors#apply()
 endfunction
 
@@ -100,7 +100,6 @@ function! s:set_keybindings() abort
     nnoremap <buffer> <silent> ,i :call <SID>table_info()<CR>
     nnoremap <buffer> <silent> ,r :call vime#list#refresh()<CR>
     nnoremap <buffer> <silent> ,c :call <SID>compute_start()<CR>
-    nnoremap <buffer> <silent> ,pdb :call vime#debug#toggle()<CR>
     nnoremap <buffer> <silent> ,q :call vime#nav#quit()<CR>
 endfunction
 
@@ -125,14 +124,14 @@ function! s:select_table(...) abort
         echo 'VIME: No table under cursor'
         return
     endif
-    call vime#table#open(l:name, 100, l:split)
+    call vime#table#open(l:name, l:split)
 endfunction
 
 function! s:open_config() abort
     let l:plugin_dir = vime#state#get('plugin_dir')
     let l:candidates = [
-        \ fnamemodify(l:plugin_dir, ':h') . '/config.cfg',
-        \ getcwd() . '/config.cfg'
+        \ fnamemodify(l:plugin_dir, ':h') . '/config.json',
+        \ getcwd() . '/config.json'
         \ ]
     for l:path in l:candidates
         if filereadable(l:path)
@@ -140,7 +139,7 @@ function! s:open_config() abort
             return
         endif
     endfor
-    echo 'VIME: config.cfg not found'
+    echo 'VIME: config.json not found'
 endfunction
 
 function! s:table_info() abort

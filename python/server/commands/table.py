@@ -4,8 +4,6 @@ import logging
 
 from tabulate import tabulate
 
-from server.formatters import format_fast_table
-
 logger = logging.getLogger("vime")
 
 
@@ -16,17 +14,7 @@ def handle(state, payload):
         return {"ok": False, "error": "No file open"}
 
     name = payload.get("name", "")
-    head = payload.get("head", 100)
-    fast = bool(payload.get("fast", False))
-    logger.debug("Loading table: %s (head=%s fast=%s)", name, head, fast)
-
-    if fast:
-        data = state.loader.load_table_fast(name)
-        if data is None:
-            logger.warning("Fast table not found or unsupported: %s", name)
-            return {"ok": False, "error": f"Table not found or fast read unsupported: {name}"}
-        content = format_fast_table(name, data)
-        return {"ok": True, "content": content, "columns": [], "name": name, "fast": True}
+    logger.debug("Loading table: %s", name)
 
     df = state.load_table(name)
     if df is None:
@@ -37,10 +25,8 @@ def handle(state, payload):
     state.current_df = df
     state.current_table = name
 
-    display_df = df.head(head) if head and len(df) > head else df
-
     content = tabulate(
-        display_df,
+        df,
         headers="keys",
         tablefmt="plain",
         showindex=False,
@@ -48,11 +34,7 @@ def handle(state, payload):
         numalign="left",
     )
 
-    # Add a header line with table info
-    shape_info = f"  [{len(df)} rows x {len(df.columns)} cols]"
-    if head and len(df) > head:
-        shape_info += f"  (showing first {head})"
-    header = f"{name}{shape_info}"
+    header = f"{name}  [{len(df)} rows x {len(df.columns)} cols]"
 
     columns = [str(c) for c in df.columns]
     logger.debug("Loaded table: %s (rows=%d cols=%d)", name, len(df), len(df.columns))

@@ -55,5 +55,4 @@ function! s:set_keybindings() abort
     nnoremap <buffer> <silent> ,b :call vime#nav#back_to_table()<CR>
     nnoremap <buffer> <silent> ,q :call vime#nav#close_buf()<CR>
     nnoremap <buffer> <silent> ,pq :call vime#nav#close_buf()<CR>
-    nnoremap <buffer> <silent> ,pdb :call vime#debug#toggle()<CR>
 endfunction

@@ -126,16 +126,15 @@ When you open an H5 file, you see a list of all tables with their dimensions:
 | `<Enter>` | Open the table under the cursor     |
 | `,gv`     | Open table in a vertical split      |
 | `,gh`     | Open table in a horizontal split    |
-| `,s`      | Open `config.cfg`                   |
+| `,s`      | Open `config.json`                  |
 | `,i`      | Show info (shape, dtypes, summary)  |
 | `,r`      | Refresh the table list              |
 | `,c`      | Start a background compute job      |
-| `,pdb`    | Toggle debug log buffer             |
 | `,q`      | Quit VIME and stop the backend      |
 
 ### Table Content View
 
-Shows the table data formatted as a grid (first 100 rows by default):
+Shows the table data formatted as a grid:
 
 **Keybindings:**
 
@@ -146,10 +145,7 @@ Shows the table data formatted as a grid (first 100 rows by default):
 | `,ph`  | Plot in horizontal split                |
 | `,pq`  | Close all plot buffers                  |
 | `,b`   | Back to table list                      |
-| `,h`   | Change row limit (head N)               |
-| `,a`   | Show all rows                           |
 | `,i`   | Show table info                         |
-| `,pdb` | Toggle debug log buffer                 |
 | `,q`   | Close buffer                            |
 
 **Commands:**
@@ -171,7 +167,6 @@ Displays a Unicode braille plot in a new buffer. Each character cell uses a 2x4 
 | `,b`   | Back to table     |
 | `,q`   | Close plot        |
 | `,pq`  | Close plot        |
-| `,pdb` | Toggle debug      |
 
 ### Other Commands
 
@@ -186,7 +181,6 @@ VIME/
   autoload/vime/            Vim autoload modules
     buffer.vim                 Scratch buffer creation and border wrapping
     colors.vim                 Nord-based highlight groups and syntax rules
-    debug.vim                  Debug log buffer (500-line rolling history)
     http.vim                   HTTP client layer (curl-based)
     info.vim                   Table metadata display
     list.vim                   Table list buffer and compute polling
@@ -206,7 +200,7 @@ VIME/
       http.py                  Threaded HTTP server and request handler
       app.py                   Command dispatcher
       state.py                 Shared server state (ServerState, ComputeState)
-      formatters.py            JSON encoding (NumpyEncoder) and fast table formatting
+      formatters.py            JSON encoding (NumpyEncoder)
       commands/
         open.py                  Open HDF5 and list tables
         table.py                 Load and format table data
@@ -233,7 +227,7 @@ VIME supports two backends for reading HDF5 files:
 
 - **"Server not running"**: Use the `vime` wrapper to start the HTTP server before opening an `.h5`.
 - **"curl not found"**: Install curl and ensure it is on your PATH.
-- **Large tables are slow**: Use `,h` to limit the number of rows displayed, or the default 100-row head.
+- **Large tables are slow**: Consider using smaller HDF5 files or filtering data before loading.
 - **Check server errors**: Python server logs go to stderr (terminal where the wrapper started).
 - **Multiple instances**: If port 51789 is in use, the launcher automatically increments the port. Set `VIME_HTTP_PORT` or `VIME_HTTP_PORT_RETRIES` to control the range.
 

@@ -9,11 +9,9 @@ function! vime#colors#define() abort
     highlight VimeBorder     guifg=#4C566A guibg=NONE    ctermfg=60  ctermbg=NONE
     highlight VimeTableName  guifg=#88C0D0 guibg=NONE    ctermfg=110 ctermbg=NONE
     highlight VimeTableDims  guifg=#4C566A guibg=NONE    ctermfg=60  ctermbg=NONE
-    highlight VimePlotAxis   guifg=#81A1C1 guibg=NONE    ctermfg=109 ctermbg=NONE
     highlight VimePlotData   guifg=#A3BE8C guibg=NONE    ctermfg=144 ctermbg=NONE
     highlight VimeFooter     guifg=#D8DEE9 guibg=#3B4252 ctermfg=253 ctermbg=238 gui=bold cterm=bold
     highlight VimeTitle      guifg=#EBCB8B guibg=NONE    ctermfg=222 ctermbg=NONE
-    highlight VimeMuted      guifg=#616E88 guibg=NONE    ctermfg=60  ctermbg=NONE
     highlight VimeGridLine   guifg=#4C566A guibg=NONE    ctermfg=60  ctermbg=NONE
 endfunction
 

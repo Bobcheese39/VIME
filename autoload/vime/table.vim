@@ -3,9 +3,9 @@
 
 scriptencoding utf-8
 
-function! vime#table#open(name, head, ...) abort
+function! vime#table#open(name, ...) abort
     let l:split = a:0 >= 1 ? a:1 : ''
-    let l:resp = vime#http#send({'cmd': 'table', 'name': a:name, 'head': a:head})
+    let l:resp = vime#http#send({'cmd': 'table', 'name': a:name})
 
     if !vime#http#check_response(l:resp, 'Failed to read table')
         return
@@ -18,7 +18,7 @@ function! vime#table#open(name, head, ...) abort
     call vime#buffer#render_content(l:resp['content'])
     call s:set_keybindings()
     setlocal laststatus=2
-    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,h\ Head\ \ │\ \ ,a\ All\ \ │\ \ ,i\ Info\ \ │\ \ ,pdb\ Debug\ \ │\ \ ,q\ Close%=
+    setlocal statusline=%#VimeFooter#\ \ ,p\ Plot\ \ │\ \ ,pv\ V-Plot\ \ │\ \ ,ph\ H-Plot\ \ │\ \ ,pq\ Close\ Plot\ \ │\ \ ,b\ Back\ \ │\ \ ,i\ Info\ \ │\ \ ,q\ Close%=
     call vime#colors#apply()
 endfunction
 
@@ -33,10 +33,7 @@ function! s:set_keybindings() abort
     nnoremap <buffer> <silent> ,pq :call vime#nav#close_plot_buffers()<CR>
     nnoremap <buffer> <silent> ,b :call vime#nav#back_to_list()<CR>
     nnoremap <buffer> <silent> ,q :call vime#nav#close_buf()<CR>
-    nnoremap <buffer> <silent> ,h :call <SID>head()<CR>
-    nnoremap <buffer> <silent> ,a :call <SID>all()<CR>
     nnoremap <buffer> <silent> ,i :call <SID>info_current()<CR>
-    nnoremap <buffer> <silent> ,pdb :call vime#debug#toggle()<CR>
 endfunction
 
 function! s:plot_prompt(...) abort
@@ -66,24 +63,6 @@ function! s:plot_prompt(...) abort
     let l:col2 = l:parts[1]
     let l:ptype = len(l:parts) >= 3 ? l:parts[2] : 'line'
     call vime#plot#do_plot(l:col1, l:col2, l:ptype, l:split)
-endfunction
-
-function! s:head() abort
-    let l:n = input('Show first N rows (default 100): ')
-    if l:n ==# ''
-        let l:n = 100
-    else
-        let l:n = str2nr(l:n)
-    endif
-    if exists('b:vime_table_name')
-        call vime#table#open(b:vime_table_name, l:n)
-    endif
-endfunction
-
-function! s:all() abort
-    if exists('b:vime_table_name')
-        call vime#table#open(b:vime_table_name, 0)
-    endif
 endfunction
 
 function! s:info_current() abort

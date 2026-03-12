@@ -22,7 +22,6 @@ flowchart TD
 
     CmdOpen --> Loader["data_loader.py<br>DataLoader"]
     CmdTable --> Loader
-    CmdTable --> Formatters["server/formatters.py"]
     CmdInfo --> Loader
     CmdPlot --> PlotEngine["plotter.py<br>BrailleCanvas"]
     CmdCompute --> TestCompute["test_compute.py"]
@@ -50,7 +49,7 @@ sequenceDiagram
     Loader-->>Dispatch: table list
     Dispatch-->>Vim: {ok, tables}
 
-    Vim->>HTTP: POST /table {name, head}
+    Vim->>HTTP: POST /table {name}
     HTTP->>Dispatch: dispatch(payload)
     Dispatch->>State: load_table(name)
     State->>Loader: load_table(name)
@@ -107,7 +106,6 @@ Key methods:
 | `close()`           | Closes all file handles                                  |
 | `list_tables()`     | Returns list of `{name, rows, cols}` dicts               |
 | `load_table(name)`  | Reads a table as a pandas DataFrame                      |
-| `load_table_fast(name)` | Reads raw data (skipping DataFrame construction)     |
 
 ### Config (`config.py`)
 
@@ -155,11 +153,9 @@ Routes command names to handler functions:
 
 All handlers receive `(state, payload)` and return a dict. Exceptions are caught and returned as `{"ok": false, "error": "..."}`.
 
-### NumpyEncoder / format_fast_table (`server/formatters.py`)
+### NumpyEncoder (`server/formatters.py`)
 
 `NumpyEncoder` is a `json.JSONEncoder` subclass that transparently converts `np.integer`, `np.floating`, `np.bool_`, and `np.ndarray` to native Python types. Used for all JSON responses.
-
-`format_fast_table(name, data)` renders raw table data (from `load_table_fast`) using `np.array2string` for a quick, unformatted dump.
 
 ### Command Handlers (`server/commands/`)
 
@@ -169,7 +165,7 @@ Validates the file path, closes existing handles, calls `state.loader.open(filep
 
 #### table.py
 
-Loads a table by name. In **normal mode**: loads as a DataFrame, applies column config ordering, formats with `tabulate` (plain format), and returns the formatted text with a header line showing shape info. In **fast mode**: reads raw data via `load_table_fast` and formats with `format_fast_table`.
+Loads a table by name as a DataFrame, applies column config ordering, formats with `tabulate` (plain format), and returns the formatted text with a header line showing shape info.
 
 #### plot.py
 
@@ -221,14 +217,12 @@ Load a table and return its formatted content.
 
 **Request:**
 ```json
-{"name": "/experiment/results", "head": 100, "fast": false}
+{"name": "/experiment/results"}
 ```
 
 | Field  | Type   | Default | Description                                |
 |--------|--------|---------|--------------------------------------------|
 | `name` | string | --      | Table path within the HDF5 file            |
-| `head` | int    | `100`   | Maximum rows to return (`0` for all)       |
-| `fast` | bool   | `false` | Use raw fast-path (skips DataFrame)        |
 
 **Response:**
 ```json

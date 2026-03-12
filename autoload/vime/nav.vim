@@ -23,13 +23,8 @@ function! vime#nav#back_to_table() abort
 endfunction
 
 function! vime#nav#close_buf() abort
-    " Close current VIME buffer
-    let l:type = get(b:, 'vime_type', '')
-    if l:type ==# 'list'
+    if get(b:, 'vime_type', '') ==# 'list'
         call vime#nav#quit()
-    elseif l:type ==# 'debug'
-        call vime#debug#reset_bufnr()
-        bwipeout
     else
         bwipeout
     endif
@@ -66,7 +61,6 @@ function! vime#nav#quit() abort
         catch
         endtry
     endfor
-    call vime#debug#reset_bufnr()
     call vime#http#stop_server()
     " Open a new empty buffer so we don't exit vim
     enew

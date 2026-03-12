@@ -26,7 +26,6 @@ flowchart TD
     Buffer --> State
     Nav --> List
     Nav --> HTTP
-    Debug[debug.vim] --> Buffer
 ```
 
 ## Module Overview
@@ -41,7 +40,7 @@ Manages the **table list** buffer. When a file is opened, it sends an `open` com
 
 ### autoload/vime/table.vim
 
-Manages the **table data** buffer. Sends a `table` command to the backend with the table name and optional row limit (`head`). The response contains pre-formatted tabulated text and a list of column names. Provides keybindings for plotting (`,p` prompts for column indices), toggling between head/all views, and navigating back to the list.
+Manages the **table data** buffer. Sends a `table` command to the backend with the table name. The response contains pre-formatted tabulated text and a list of column names. Provides keybindings for plotting (`,p` prompts for column indices) and navigating back to the list.
 
 ### autoload/vime/plot.vim
 
@@ -65,7 +64,7 @@ Shared buffer utilities. `create_scratch(name, type, split)` creates a new nofil
 
 ### autoload/vime/colors.vim
 
-Nord-based theme for all VIME buffers. `define()` creates highlight groups (called once at plugin load), and `apply()` sets per-buffer `winhighlight` and syntax rules for borders, headers, table names, dimensions, braille plot data, axis elements, grid lines, section titles, and the status bar.
+Nord-based theme for all VIME buffers. `define()` creates highlight groups (called once at plugin load), and `apply()` sets per-buffer `winhighlight` and syntax rules for borders, headers, table names, dimensions, braille plot data, grid lines, section titles, and the status bar.
 
 **Highlight groups:**
 
@@ -76,20 +75,14 @@ Nord-based theme for all VIME buffers. `define()` creates highlight groups (call
 | `VimeBorder`     | Box-drawing border characters        |
 | `VimeTableName`  | Table path names (`/path/to/table`)  |
 | `VimeTableDims`  | Dimension labels (`N rows x M cols`) |
-| `VimePlotAxis`   | Plot axis lines and tick marks       |
 | `VimePlotData`   | Braille plot data points             |
 | `VimeFooter`     | Status bar                           |
 | `VimeTitle`      | Section titles                       |
-| `VimeMuted`      | De-emphasized text                   |
 | `VimeGridLine`   | Table grid lines                     |
 
 ### autoload/vime/state.vim
 
 Minimal key-value store for shared plugin state. Holds two keys: `current_file` (path of the currently open H5 file) and `plugin_dir` (path to the plugin installation directory). Accessed via `vime#state#get(key)` and `vime#state#set(key, val)`.
-
-### autoload/vime/debug.vim
-
-Debug log buffer with a 500-line rolling history. `vime#debug#log(line)` appends a timestamped line to the in-memory log and, if the debug buffer is visible, appends it there too. `vime#debug#toggle()` shows or hides the debug buffer as a horizontal split (5 lines tall). The log persists across toggle cycles.
 
 ## Buffer Types
 
@@ -101,7 +94,6 @@ Every VIME buffer has a `b:vime_type` variable set on creation, identifying its 
 | `table`        | Table data      | Displays table rows in tabulated format           |
 | `plot`         | Plot            | Renders a Unicode braille plot                    |
 | `info`         | Info            | Shows table metadata and column statistics        |
-| `debug`        | Debug log       | Rolling timestamped debug log                     |
 
 Additional buffer-local variables set by specific buffer types:
 
@@ -122,11 +114,10 @@ All keybindings are buffer-local and only active in the corresponding VIME buffe
 | `<Enter>` | Open the table under the cursor         |
 | `,gv`     | Open table in a vertical split          |
 | `,gh`     | Open table in a horizontal split        |
-| `,s`      | Open `config.cfg`                       |
+| `,s`      | Open `config.json`                      |
 | `,i`      | Show info for the table under cursor    |
 | `,r`      | Refresh the table list                  |
 | `,c`      | Start a background compute job          |
-| `,pdb`    | Toggle debug log buffer                 |
 | `,q`      | Quit VIME (close all buffers + server)  |
 
 ### Table Buffer
@@ -138,10 +129,7 @@ All keybindings are buffer-local and only active in the corresponding VIME buffe
 | `,ph`  | Plot in a horizontal split                |
 | `,pq`  | Close all plot buffers                    |
 | `,b`   | Back to table list                        |
-| `,h`   | Change head (show first N rows)           |
-| `,a`   | Show all rows                             |
 | `,i`   | Show table info                           |
-| `,pdb` | Toggle debug log buffer                   |
 | `,q`   | Close buffer                              |
 
 ### Plot Buffer
@@ -151,21 +139,12 @@ All keybindings are buffer-local and only active in the corresponding VIME buffe
 | `,b`   | Back to table            |
 | `,q`   | Close plot               |
 | `,pq`  | Close plot               |
-| `,pdb` | Toggle debug log buffer  |
 
 ### Info Buffer
 
 | Key    | Action                   |
 |--------|--------------------------|
 | `,b`   | Back to table list       |
-| `,pdb` | Toggle debug log buffer  |
-| `,q`   | Close buffer             |
-
-### Debug Buffer
-
-| Key    | Action                   |
-|--------|--------------------------|
-| `,pdb` | Toggle debug log buffer  |
 | `,q`   | Close buffer             |
 
 ## Commands
