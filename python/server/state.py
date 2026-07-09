@@ -23,24 +23,16 @@ class JobStatus(Enum):
     ERROR = "error"
 
 
-ComputeStatus = JobStatus
-
-
 @dataclass
-class ComputeState:
-    """Snapshot of a background compute job's progress."""
+class JobState:
+    """Snapshot of a background job's progress (compute, plot, etc.).
+
+    ``result`` carries the job's payload: the plot content or the new virtual
+    table's name, depending on the job.
+    """
     status: JobStatus = JobStatus.IDLE
     message: str = ""
-    table_name: Optional[str] = None
-    error: Optional[str] = None
-
-
-@dataclass
-class PlotState:
-    """Snapshot of a background plot job's progress."""
-    status: JobStatus = JobStatus.IDLE
-    message: str = ""
-    content: Optional[str] = None
+    result: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -65,9 +57,9 @@ class Session:
         self.current_table = None       # Name of the last-fetched table
         self.virtual_tables = {}        # Virtual tables created by compute jobs
         self.compute_thread = None
-        self.compute = ComputeState()
+        self.compute = JobState()
         self.plot_thread = None
-        self.plot = PlotState()
+        self.plot = JobState()
 
     def ensure_open(self):
         """Reopen the file handle if it was closed (e.g. by LRU eviction)."""

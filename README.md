@@ -39,7 +39,7 @@ The backend is a **persistent, shared daemon**: it is started lazily on the firs
 - **Vim** with JSON support (`+json`) for `json_encode()` / `json_decode()`
 - **curl** available on PATH
 - **Python 3.6+**
-- Python packages: `h5py`, `pandas`, `numpy`, `scipy`, `tabulate`, `tables`
+- Python packages: `h5py`, `pandas`, `numpy`, `tabulate`, `tables`
 
 ## Installation
 
@@ -205,7 +205,7 @@ VIME/
     server/
       http.py                  Threaded HTTP server and request handler
       app.py                   Command dispatcher
-      state.py                 Shared server state (ServerState, ComputeState)
+      state.py                 Shared server state (ServerState, JobState)
       formatters.py            JSON encoding (NumpyEncoder)
       commands/
         open.py                  Open HDF5 and list tables

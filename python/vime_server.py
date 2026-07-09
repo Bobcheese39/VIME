@@ -68,7 +68,7 @@ def main():
 
     state = ServerState()
     dispatch_fn = lambda payload: dispatch(state, payload)
-    handler_cls = make_handler(dispatch_fn, state.close_handles, state.mark_activity)
+    handler_cls = make_handler(dispatch_fn, state.mark_activity)
 
     try:
         httpd, bound_port = bind_http_server(

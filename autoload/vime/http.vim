@@ -18,13 +18,6 @@ function! vime#http#start_server() abort
     return 0
 endfunction
 
-function! vime#http#stop_server() abort
-    try
-        call vime#http#send({'cmd': 'shutdown'})
-    catch
-    endtry
-endfunction
-
 " Start a repeating keepalive so the shared daemon's idle timeout does not
 " reap it while this Vim still has VIME buffers open. Idempotent.
 function! vime#http#start_keepalive() abort

@@ -44,7 +44,7 @@ function! vime#list#refresh(...) abort
     endif
 
     let l:code = type(l:resp) == v:t_dict ? get(l:resp, 'code', '') : ''
-    if l:code ==# 'no_file_open' || l:code ==# 'file_mismatch'
+    if l:code ==# 'no_file_open'
         call vime#list#open(l:file)
         return
     endif

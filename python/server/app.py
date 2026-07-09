@@ -12,20 +12,6 @@ from server.commands import compute as cmd_compute
 logger = logging.getLogger("vime")
 
 
-def _handle_close(state, payload):
-    """Close a single session's handles, or all if no file is given.
-
-    HTTP shutdown is handled separately by the /shutdown route.
-    """
-    logger.info("Close requested")
-    session = state.session_for(payload)
-    if session is not None:
-        session.close()
-    else:
-        state.close_handles()
-    return {"ok": True}
-
-
 def dispatch(state, payload):
     """Route a command dict to the appropriate handler."""
     cmd = payload.get("cmd", "")
@@ -34,9 +20,7 @@ def dispatch(state, payload):
         "open": cmd_open.handle,
         "list_tables": cmd_list_tables.handle,
         "table": cmd_table.handle,
-        "plot": cmd_plot.handle,
         "info": cmd_info.handle,
-        "close": _handle_close,
         "plot_start": cmd_plot.handle_start,
         "plot_status": cmd_plot.handle_status,
         "compute_start": cmd_compute.handle_start,

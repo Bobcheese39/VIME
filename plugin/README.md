@@ -56,7 +56,7 @@ Navigation and buffer lifecycle manager. Provides functions to go back to the li
 
 ### autoload/vime/http.vim
 
-HTTP client layer. All server communication goes through `vime#http#send(payload)`, which JSON-encodes the payload, POSTs it to the backend using `curl`, and decodes the JSON response. The command name is extracted from the payload's `cmd` key and used as the URL path (`POST /{cmd}`). Also provides `ping()` for health checks, `stop_server()` for shutdown, and `start_keepalive()` which starts a repeating timer that pings `/health` while any VIME buffer exists, keeping the shared daemon alive (and letting it idle out once all VIME buffers are closed).
+HTTP client layer. All server communication goes through `vime#http#send(payload)`, which JSON-encodes the payload, POSTs it to the backend using `curl`, and decodes the JSON response. The command name is extracted from the payload's `cmd` key and used as the URL path (`POST /{cmd}`). Also provides `ping()` for health checks and `start_keepalive()`, which starts a repeating timer that pings `/health` while any VIME buffer exists, keeping the shared daemon alive (and letting it idle out once all VIME buffers are closed).
 
 ### autoload/vime/buffer.vim
 

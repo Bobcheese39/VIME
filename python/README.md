@@ -99,9 +99,9 @@ Per-file state, keyed by normalized file path:
 | `current_table`   | `str` or `None`           | Name of the last-loaded table                      |
 | `virtual_tables`  | `dict`                    | Tables created by compute jobs                     |
 | `compute_thread`  | `Thread` or `None`        | Background compute thread                          |
-| `compute`         | `ComputeState`            | Current compute job status                         |
+| `compute`         | `JobState`                | Current compute job status                         |
 | `plot_thread`     | `Thread` or `None`        | Background plot thread                             |
-| `plot`            | `PlotState`               | Current plot job status                            |
+| `plot`            | `JobState`                | Current plot job status                            |
 
 Key methods:
 - `ensure_open()` -- reopens the file handle if it was closed by LRU eviction (makes eviction transparent).
@@ -109,9 +109,9 @@ Key methods:
 - `get_table_list()` -- merges file-backed tables with virtual tables.
 - `close()` -- closes this session's HDF5 file handles.
 
-### ComputeState / ComputeStatus (`server/state.py`)
+### JobState / JobStatus (`server/state.py`)
 
-Tracks background compute job progress. `ComputeStatus` is an enum with values: `IDLE`, `RUNNING`, `DONE`, `ERROR`. `ComputeState` is a dataclass holding the status, a message, an optional table name (on success), and an optional error string (on failure).
+Tracks background job progress (shared by both compute and plot jobs). `JobStatus` is an enum with values: `IDLE`, `RUNNING`, `DONE`, `ERROR`. `JobState` is a dataclass holding the status, a message, a `result` payload (the plot content or the new virtual table's name, on success), and an optional error string (on failure).
 
 ### DataLoader (`data_loader.py`)
 
@@ -150,11 +150,10 @@ Unicode braille plotting engine. Each character cell encodes a 2x4 sub-pixel gri
 
 ### VimeHTTPServer / VimeHandler (`server/http.py`)
 
-Threaded HTTP server (`ThreadingHTTPServer` subclass) with strict port exclusivity (`allow_reuse_address = False`). The handler class is created dynamically by `make_handler(dispatch_fn, close_handles_fn, mark_activity_fn)` to capture the dispatch, cleanup, and idle-reset callbacks in a closure. Every request (including `GET /health`) calls `mark_activity_fn` to reset the idle timer.
+Threaded HTTP server (`ThreadingHTTPServer` subclass) with strict port exclusivity (`allow_reuse_address = False`). The handler class is created dynamically by `make_handler(dispatch_fn, mark_activity_fn)` to capture the dispatch and idle-reset callbacks in a closure. Every request (including `GET /health`) calls `mark_activity_fn` to reset the idle timer.
 
 Routes:
 - `GET /health` -- returns `{"ok": true}` (also used as the Vim keepalive ping)
-- `POST /shutdown` -- closes handles, responds, then shuts down the server in a daemon thread
 - `POST /{cmd}` -- extracts the command from the URL path, parses the JSON body, injects `cmd` into the payload, and calls `dispatch_fn`
 
 `bind_http_server(host, start_port, max_attempts, handler_cls)` tries binding to sequential ports starting from `start_port`, incrementing on `EADDRINUSE` up to `max_attempts` times.
@@ -166,10 +165,11 @@ Routes command names to handler functions:
 | Command           | Handler                    |
 |-------------------|----------------------------|
 | `open`            | `commands.open.handle`     |
+| `list_tables`     | `commands.list_tables.handle` |
 | `table`           | `commands.table.handle`    |
-| `plot`            | `commands.plot.handle`     |
 | `info`            | `commands.info.handle`     |
-| `close`           | `_handle_close` (inline)   |
+| `plot_start`      | `commands.plot.handle_start` |
+| `plot_status`     | `commands.plot.handle_status` |
 | `compute_start`   | `commands.compute.handle_start` |
 | `compute_status`  | `commands.compute.handle_status` |
 
@@ -199,19 +199,15 @@ Resolves the session, loads a table, and returns metadata: table name, shape (`r
 
 #### compute.py
 
-Manages background compute jobs per session. `handle_start` checks that no job is already running for the session, then launches `test_compute()` (imported lazily, which pulls in scikit-learn) in a daemon thread. The thread stores its result as a virtual table in `session.virtual_tables` under a timestamped name (`/__computed__/compute_YYYYMMDD_HHMMSS`). `handle_status` returns the session's current `ComputeState` so the Vim plugin can poll for completion.
+Manages background compute jobs per session. `handle_start` checks that no job is already running for the session, then launches `test_compute()` (imported lazily) in a daemon thread. The thread stores its result as a virtual table in `session.virtual_tables` under a timestamped name (`/__computed__/compute_YYYYMMDD_HHMMSS`). `handle_status` returns the session's current `JobState` so the Vim plugin can poll for completion.
 
 ## HTTP API Reference
 
-All command endpoints accept `POST` with a JSON body and return JSON. Every response includes an `ok` boolean field. All commands except `/health` and `/shutdown` must include a `file` field identifying the session (the open file's path); the examples below omit it for brevity except where noted.
+All command endpoints accept `POST` with a JSON body and return JSON. Every response includes an `ok` boolean field. All commands except `/health` must include a `file` field identifying the session (the open file's path); the examples below omit it for brevity except where noted.
 
 ### GET /health
 
 Health check. Returns `{"ok": true}` when the server is running.
-
-### POST /shutdown
-
-Closes all file handles and shuts down the server. Returns `{"ok": true}` before shutdown.
 
 ### POST /open
 
@@ -257,9 +253,9 @@ Load a table and return its formatted content.
 }
 ```
 
-### POST /plot
+### POST /plot_start
 
-Generate a braille Unicode plot from the currently loaded table.
+Start a background braille-plot job from the currently loaded table. Poll `/plot_status` for the result.
 
 **Request:**
 ```json
@@ -274,12 +270,22 @@ Generate a braille Unicode plot from the currently loaded table.
 | `height` | int         | `20`     | Plot height in character rows            |
 | `file`   | string      | --       | Path identifying the session             |
 
-The async variants `/plot_start` and `/plot_status` follow the same start/poll pattern as compute and likewise require `file`.
-
 **Response:**
+```json
+{"ok": true, "status": "running", "message": "Generating plot..."}
+```
+
+### POST /plot_status
+
+Poll the current plot job status. When `status` is `"done"`, the response includes a `content` field with the rendered plot.
+
+**Response (done):**
 ```json
 {
   "ok": true,
+  "status": "done",
+  "message": "Plot done",
+  "error": null,
   "content": "Plot: col_a vs col_b  (/experiment/results)\n\n..."
 }
 ```

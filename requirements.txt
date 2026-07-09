@@ -1,6 +1,5 @@
 h5py
 pandas
 numpy
-scipy
 tabulate
 tables

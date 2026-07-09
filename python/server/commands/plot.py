@@ -3,21 +3,13 @@
 import logging
 import threading
 
-from server.state import PlotState, JobStatus
+from server.state import JobState, JobStatus
 
 logger = logging.getLogger("vime")
 
 
-def handle(state, payload):
-    """Synchronous plot (kept for backward compatibility)."""
-    session = state.session_for(payload)
-    if session is None:
-        return {"ok": False, "error": "No table loaded. Open a table first."}
-    return _generate_plot(session, payload)
-
-
 def handle_start(state, payload):
-    """Validate inputs, then spawn a background thread for plot generation."""
+    """Spawn a background thread for plot generation."""
     session = state.session_for(payload)
     if session is None:
         return {"ok": False, "error": "No table loaded. Open a table first."}
@@ -26,11 +18,7 @@ def handle_start(state, payload):
         logger.warning("Plot start requested while already running")
         return {"ok": False, "error": "Plot already running", "status": JobStatus.RUNNING.value}
 
-    validation = _validate_plot_inputs(session, payload)
-    if validation is not None:
-        return validation
-
-    session.plot = PlotState(status=JobStatus.RUNNING, message="Generating plot...")
+    session.plot = JobState(status=JobStatus.RUNNING, message="Generating plot...")
 
     session.plot_thread = threading.Thread(
         target=_run_plot_job, args=(session, payload), name="vime-plot", daemon=True
@@ -53,41 +41,8 @@ def handle_status(state, payload):
         "error": session.plot.error,
     }
     if session.plot.status == JobStatus.DONE:
-        resp["content"] = session.plot.content
+        resp["content"] = session.plot.result
     return resp
-
-
-def _validate_plot_inputs(session, payload):
-    """Validate plot inputs synchronously. Returns an error dict, or None if valid."""
-    if session.current_df is None:
-        logger.warning("Plot requested with no table loaded")
-        return {"ok": False, "error": "No table loaded. Open a table first."}
-
-    cols = payload.get("cols", [])
-    if len(cols) < 2:
-        return {"ok": False, "error": "Need at least 2 column indices (x y)"}
-
-    df = session.current_df
-    try:
-        x_col = _resolve_column(df, cols[0])
-        y_col = _resolve_column(df, cols[1])
-    except (IndexError, KeyError) as exc:
-        logger.warning("Invalid plot column: %s", exc)
-        return {"ok": False, "error": f"Invalid column: {exc}"}
-
-    try:
-        df[x_col].values.astype(float)
-    except (ValueError, TypeError) as exc:
-        logger.warning("Non-numeric x column %s: %s", x_col, exc)
-        return {"ok": False, "error": f"Cannot convert column '{x_col}' to numeric: {exc}"}
-
-    try:
-        df[y_col].values.astype(float)
-    except (ValueError, TypeError) as exc:
-        logger.warning("Non-numeric y column %s: %s", y_col, exc)
-        return {"ok": False, "error": f"Cannot convert column '{y_col}' to numeric: {exc}"}
-
-    return None
 
 
 def _run_plot_job(session, payload):
@@ -96,21 +51,21 @@ def _run_plot_job(session, payload):
         logger.info("Plot job started")
         result = _generate_plot(session, payload)
         if result.get("ok"):
-            session.plot = PlotState(
+            session.plot = JobState(
                 status=JobStatus.DONE,
                 message="Plot done",
-                content=result["content"],
+                result=result["content"],
             )
             logger.info("Plot job completed")
         else:
-            session.plot = PlotState(
+            session.plot = JobState(
                 status=JobStatus.ERROR,
                 message="Plot failed",
                 error=result.get("error", "Unknown error"),
             )
             logger.warning("Plot job returned error: %s", result.get("error"))
     except Exception as exc:
-        session.plot = PlotState(
+        session.plot = JobState(
             status=JobStatus.ERROR,
             message="Plot failed",
             error=str(exc),

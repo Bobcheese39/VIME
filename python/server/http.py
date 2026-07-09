@@ -3,7 +3,6 @@
 import errno
 import json
 import logging
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -33,12 +32,11 @@ def _parse_request_json(handler):
     return payload if isinstance(payload, dict) else None
 
 
-def make_handler(dispatch_fn, close_handles_fn, mark_activity_fn=None):
+def make_handler(dispatch_fn, mark_activity_fn=None):
     """Create an HTTP request handler class.
 
     Args:
         dispatch_fn: callable(payload) -> dict, routes commands.
-        close_handles_fn: callable(), closes open file handles on shutdown.
         mark_activity_fn: optional callable(), called on each request to reset
             the idle timer.
     """
@@ -69,13 +67,6 @@ def make_handler(dispatch_fn, close_handles_fn, mark_activity_fn=None):
         def do_POST(self):
             _touch()
             parsed = urlparse(self.path)
-            if parsed.path == "/shutdown":
-                logger.info("Shutdown requested via HTTP")
-                close_handles_fn()
-                self._send_json(200, {"ok": True})
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-                return
-
             cmd = parsed.path.lstrip("/")
             if not cmd:
                 self._send_json(404, {"ok": False, "error": "Unknown route"})

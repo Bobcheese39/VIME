@@ -4,7 +4,7 @@ import logging
 import time
 import threading
 
-from server.state import ComputeState, ComputeStatus
+from server.state import JobState, JobStatus
 
 logger = logging.getLogger("vime")
 
@@ -17,9 +17,9 @@ def handle_start(state, payload):
 
     if session.compute_thread is not None and session.compute_thread.is_alive():
         logger.warning("Compute start requested while already running")
-        return {"ok": False, "error": "Compute already running", "status": ComputeStatus.RUNNING.value}
+        return {"ok": False, "error": "Compute already running", "status": JobStatus.RUNNING.value}
 
-    session.compute = ComputeState(status=ComputeStatus.RUNNING, message="Computing...")
+    session.compute = JobState(status=JobStatus.RUNNING, message="Computing...")
 
     session.compute_thread = threading.Thread(
         target=_run_compute_job, args=(session,), name="vime-compute", daemon=True
@@ -39,7 +39,7 @@ def handle_status(state, payload):
         "ok": True,
         "status": session.compute.status.value,
         "message": session.compute.message,
-        "table": session.compute.table_name,
+        "table": session.compute.result,
         "error": session.compute.error,
     }
 
@@ -58,15 +58,15 @@ def _run_compute_job(session):
             "rows": int(df.shape[0]),
             "cols": int(df.shape[1]),
         }
-        session.compute = ComputeState(
-            status=ComputeStatus.DONE,
+        session.compute = JobState(
+            status=JobStatus.DONE,
             message=f"Compute done: {name}",
-            table_name=name,
+            result=name,
         )
         logger.info("Compute job completed: %s", name)
     except Exception as exc:
-        session.compute = ComputeState(
-            status=ComputeStatus.ERROR,
+        session.compute = JobState(
+            status=JobStatus.ERROR,
             message="Compute failed",
             error=str(exc),
         )
