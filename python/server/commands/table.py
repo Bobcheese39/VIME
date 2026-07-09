@@ -2,28 +2,35 @@
 
 import logging
 
-from tabulate import tabulate
-
 logger = logging.getLogger("vime")
 
 
 def handle(state, payload):
     """Read a table and return its formatted content."""
-    if not state.loader.is_open:
+    session = state.session_for(payload)
+    if session is None:
         logger.warning("Table requested with no file open")
         return {"ok": False, "error": "No file open"}
+
+    try:
+        session.ensure_open()
+    except Exception as exc:
+        logger.warning("Failed to reopen session %s: %s", session.filepath, exc)
+        return {"ok": False, "error": str(exc)}
 
     name = payload.get("name", "")
     logger.debug("Loading table: %s", name)
 
-    df = state.load_table(name)
+    df = session.load_table(name)
     if df is None:
         logger.warning("Table not found: %s", name)
         return {"ok": False, "error": f"Table not found: {name}"}
 
-    df = _apply_column_config(state, name, df)
-    state.current_df = df
-    state.current_table = name
+    df = _apply_column_config(session, name, df)
+    session.current_df = df
+    session.current_table = name
+
+    from tabulate import tabulate
 
     content = tabulate(
         df,
@@ -46,14 +53,14 @@ def handle(state, payload):
     }
 
 
-def _apply_column_config(state, table_name, df):
+def _apply_column_config(session, table_name, df):
     """Apply configured column order/visibility for a table."""
-    if state.config is None:
+    if session.config is None:
         return df
 
     discovered = [str(col) for col in df.columns]
     try:
-        configured = state.config.merge_table_columns(table_name, discovered)
+        configured = session.config.merge_table_columns(table_name, discovered)
     except Exception as exc:
         logger.warning("Failed to sync table config for %s: %s", table_name, exc)
         return df

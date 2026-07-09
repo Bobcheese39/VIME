@@ -3,6 +3,9 @@
 
 scriptencoding utf-8
 
+" Module-private state
+let s:keepalive_timer = -1
+
 " ======================================================================
 " Public functions
 " ======================================================================
@@ -20,6 +23,33 @@ function! vime#http#stop_server() abort
         call vime#http#send({'cmd': 'shutdown'})
     catch
     endtry
+endfunction
+
+" Start a repeating keepalive so the shared daemon's idle timeout does not
+" reap it while this Vim still has VIME buffers open. Idempotent.
+function! vime#http#start_keepalive() abort
+    if s:keepalive_timer != -1
+        return
+    endif
+    let l:interval = get(g:, 'vime_keepalive_ms', 120000)
+    let s:keepalive_timer = timer_start(l:interval, function('s:keepalive_tick'), {'repeat': -1})
+endfunction
+
+function! s:has_vime_buffer() abort
+    for l:buf in getbufinfo()
+        if getbufvar(l:buf.bufnr, 'vime_type', '') !=# ''
+            return 1
+        endif
+    endfor
+    return 0
+endfunction
+
+function! s:keepalive_tick(timer_id) abort
+    " Only ping while VIME buffers exist; otherwise let the daemon idle out.
+    if !s:has_vime_buffer()
+        return
+    endif
+    call vime#http#ping()
 endfunction
 
 function! vime#http#send(payload) abort

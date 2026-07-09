@@ -5,7 +5,7 @@ scriptencoding utf-8
 
 function! vime#table#open(name, ...) abort
     let l:split = a:0 >= 1 ? a:1 : ''
-    let l:resp = vime#http#send({'cmd': 'table', 'name': a:name})
+    let l:resp = vime#http#send({'cmd': 'table', 'name': a:name, 'file': vime#state#get('current_file')})
 
     if !vime#http#check_response(l:resp, 'Failed to read table')
         return

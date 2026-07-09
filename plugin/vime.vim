@@ -52,8 +52,3 @@ augroup vime_filetype
     autocmd!
     autocmd BufReadCmd *.h5,*.hdf5 call vime#list#open(expand('<afile>:p'))
 augroup END
-
-augroup vime_lifecycle
-    autocmd!
-    autocmd VimLeave * if get(g:, 'vime_owns_server', 0) | call vime#http#stop_server() | endif
-augroup END

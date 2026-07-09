@@ -39,6 +39,7 @@ def _safe_int(value, default, minimum=1):
 PORT_START = _safe_int(os.environ.get("VIME_HTTP_PORT", "51789"), 51789, minimum=1)
 PORT_RETRIES = _safe_int(os.environ.get("VIME_HTTP_PORT_RETRIES", "100"), 100)
 STARTUP_TIMEOUT = _safe_int(os.environ.get("VIME_SERVER_STARTUP_TIMEOUT", "30"), 30)
+IDLE_TIMEOUT = _safe_int(os.environ.get("VIME_IDLE_TIMEOUT", "900"), 900, minimum=0)
 
 logger = logging.getLogger("vime.launcher")
 
@@ -101,29 +102,20 @@ def find_healthy_port():
     return None
 
 
-def send_shutdown(port):
-    """POST /shutdown to the server; errors are silently ignored."""
-    url = "http://{}:{}/shutdown".format(HOST, port)
-    try:
-        req = urllib.request.Request(url, data=b"", method="POST")
-        resp = urllib.request.urlopen(req, timeout=3)
-        resp.read()
-        resp.close()
-    except (urllib.error.URLError, OSError):
-        pass
-
-
 # ── Server lifecycle ───────────────────────────────────────────────────
 
 
 def start_server(debug=False):
-    """Launch ``vime_server.py`` in the background and return the Popen handle."""
+    """Launch ``vime_server.py`` detached so it persists after the launcher
+    (and Vim) exits, and return the Popen handle.
+    """
     cmd = [
         PYTHON_CMD,
         SERVER_SCRIPT,
         "--host", HOST,
         "--port", str(PORT_START),
         "--port-retries", str(PORT_RETRIES),
+        "--idle-timeout", str(IDLE_TIMEOUT),
     ]
     if debug:
         cmd.append("--debug")
@@ -131,10 +123,14 @@ def start_server(debug=False):
     if not debug:
         kwargs["stdout"] = subprocess.DEVNULL
         kwargs["stderr"] = subprocess.DEVNULL
-    # On Windows, create the server in a new process group so Ctrl-C
-    # delivered to the Vim console is not forwarded to the server.
+    # Detach the daemon so it outlives this launcher process. On Windows, use a
+    # new process group + DETACHED_PROCESS so Ctrl-C in the Vim console is not
+    # forwarded to it. On POSIX, start a new session.
     if sys.platform == "win32":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | detached
+    else:
+        kwargs["start_new_session"] = True
     return subprocess.Popen(cmd, **kwargs)
 
 
@@ -176,18 +172,16 @@ def main():
         configure_debug_logging()
         logger.debug("Debug mode enabled")
 
-    started_by_wrapper = False
     server_proc = None
     active_port = PORT_START
 
-    # 1. Check if a server is already running on one of the expected ports.
+    # 1. Check if a persistent server is already running on one of the ports.
     existing = find_healthy_port()
     if existing is not None:
         active_port = existing
     else:
-        # 2. Start the server in the background.
+        # 2. Start the server detached so it persists across Vim sessions.
         server_proc = start_server(debug=args.debug)
-        started_by_wrapper = True
 
         # 3. Wait for the server to bind and become healthy.
         port = wait_for_server(server_proc)
@@ -208,26 +202,16 @@ def main():
         "--cmd", "let g:vime_http_host='{}'".format(HOST),
         "--cmd", "let g:vime_http_port={}".format(active_port),
     ]
-    if started_by_wrapper:
-        vim_cmd += ["-c", "let g:vime_owns_server=1"]
     vim_cmd += vim_args  # pass through extra arguments
 
-    # 5. Launch Vim (blocking).
+    # 5. Launch Vim (blocking). The daemon is intentionally left running after
+    #    Vim exits; it reaps itself via its idle timeout.
     vim_exit = 1
     try:
         result = subprocess.run(vim_cmd)
         vim_exit = result.returncode
     except FileNotFoundError:
         print("VIME: 'vim' not found in PATH", file=sys.stderr)
-    finally:
-        # 6. Cleanup: shut down the server if we started it.
-        if started_by_wrapper:
-            send_shutdown(active_port)
-            if server_proc is not None and server_proc.poll() is None:
-                try:
-                    server_proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    terminate_server(server_proc)
 
     sys.exit(vim_exit)
 

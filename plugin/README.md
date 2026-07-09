@@ -32,7 +32,7 @@ flowchart TD
 
 ### plugin/vime.vim
 
-Entry point for the plugin. Registers three user commands (`:VimeOpen`, `:VimePlot`, `:VimeInfo`), sets up autocommands to intercept `.h5` / `.hdf5` files via `BufReadCmd`, and sends a shutdown request to the backend on `VimLeave` when the server was started by the wrapper (`g:vime_owns_server`). Initializes the Nord highlight groups and stores the plugin directory in the shared state.
+Entry point for the plugin. Registers three user commands (`:VimeOpen`, `:VimePlot`, `:VimeInfo`) and sets up an autocommand to intercept `.h5` / `.hdf5` files via `BufReadCmd`. Initializes the Nord highlight groups and stores the plugin directory in the shared state. The backend is a shared, persistent daemon, so the plugin does not stop it on `VimLeave`; the daemon reaps itself via its idle timeout.
 
 ### autoload/vime/list.vim
 
@@ -52,11 +52,11 @@ Manages the **info** buffer. Sends an `info` command to the backend for a given 
 
 ### autoload/vime/nav.vim
 
-Navigation and buffer lifecycle manager. Provides functions to go back to the list (`back_to_list`), go back to the table (`back_to_table`), close the current buffer (`close_buf`), close all plot buffers (`close_plot_buffers`), and fully quit VIME (`quit` -- wipes all VIME buffers, stops the server, and opens an empty buffer).
+Navigation and buffer lifecycle manager. Provides functions to go back to the list (`back_to_list`), go back to the table (`back_to_table`), close the current buffer (`close_buf`), close all plot buffers (`close_plot_buffers`), and quit VIME (`quit` -- wipes this Vim's VIME buffers and opens an empty buffer; the shared daemon is left running for other sessions and idle-timeout cleanup).
 
 ### autoload/vime/http.vim
 
-HTTP client layer. All server communication goes through `vime#http#send(payload)`, which JSON-encodes the payload, POSTs it to the backend using `curl`, and decodes the JSON response. The command name is extracted from the payload's `cmd` key and used as the URL path (`POST /{cmd}`). Also provides `ping()` for health checks and `stop_server()` for shutdown.
+HTTP client layer. All server communication goes through `vime#http#send(payload)`, which JSON-encodes the payload, POSTs it to the backend using `curl`, and decodes the JSON response. The command name is extracted from the payload's `cmd` key and used as the URL path (`POST /{cmd}`). Also provides `ping()` for health checks, `stop_server()` for shutdown, and `start_keepalive()` which starts a repeating timer that pings `/health` while any VIME buffer exists, keeping the shared daemon alive (and letting it idle out once all VIME buffers are closed).
 
 ### autoload/vime/buffer.vim
 
@@ -118,7 +118,7 @@ All keybindings are buffer-local and only active in the corresponding VIME buffe
 | `,i`      | Show info for the table under cursor    |
 | `,r`      | Refresh the table list                  |
 | `,c`      | Start a background compute job          |
-| `,q`      | Quit VIME (close all buffers + server)  |
+| `,q`      | Quit VIME (close this Vim's buffers; daemon keeps running) |
 
 ### Table Buffer
 
@@ -164,6 +164,6 @@ The following global Vim variables control the HTTP connection to the backend:
 | `g:vime_http_host`  | `127.0.0.1`   | Backend server host address          |
 | `g:vime_http_port`  | `51789`        | Backend server port                  |
 | `g:vime_curl_cmd`   | `curl`         | Path or name of the curl executable  |
-| `g:vime_owns_server`| `0`            | Set by the launcher; if `1`, the plugin sends a shutdown request on `VimLeave` |
+| `g:vime_keepalive_ms`| `120000`      | Keepalive ping interval (ms) while VIME buffers are open |
 
 These are typically set automatically by the `vime` launcher script. Manual configuration is only needed when running the server independently.

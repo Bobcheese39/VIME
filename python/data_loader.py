@@ -8,8 +8,6 @@ and converting datasets into pandas DataFrames.
 
 import sys
 import logging
-import pandas as pd
-import h5py
 
 
 logger = logging.getLogger("vime.data_loader")
@@ -48,6 +46,9 @@ class DataLoader:
 
     def open(self, filepath):
         """Open an HDF5 file and return the list of tables."""
+        import pandas as pd
+        import h5py
+
         logger.info("Opening HDF5 file: %s", filepath)
         self.close()
         self.filepath = filepath
@@ -131,6 +132,8 @@ class DataLoader:
 
     def _get_table_list_h5py(self):
         """Return dataset metadata using the h5py fallback backend."""
+        import h5py
+
         datasets = []
 
         def _visitor(name, obj):
@@ -146,6 +149,9 @@ class DataLoader:
 
     def _h5py_read_dataset(self, name):
         """Read an h5py dataset and return it as a DataFrame."""
+        import pandas as pd
+        import h5py
+
         # Strip leading slash for h5py lookup
         key = name.lstrip("/")
         if key not in self.h5file:

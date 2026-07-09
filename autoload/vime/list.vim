@@ -23,6 +23,7 @@ function! vime#list#open(filepath) abort
     endif
 
     call vime#state#set('current_file', a:filepath)
+    call vime#http#start_keepalive()
     call s:render_table_list(a:filepath, l:resp['tables'])
 endfunction
 
@@ -171,7 +172,7 @@ function! s:compute_start() abort
         echo 'VIME: No file open'
         return
     endif
-    let l:resp = vime#http#send({'cmd': 'compute_start'})
+    let l:resp = vime#http#send({'cmd': 'compute_start', 'file': l:file})
     if type(l:resp) != v:t_dict
         echoerr 'VIME: Failed to start compute (server returned unexpected response)'
         return
@@ -186,7 +187,7 @@ function! s:compute_start() abort
 endfunction
 
 function! s:compute_poll(timer_id) abort
-    let l:resp = vime#http#send({'cmd': 'compute_status'})
+    let l:resp = vime#http#send({'cmd': 'compute_status', 'file': vime#state#get('current_file')})
     if type(l:resp) != v:t_dict || !get(l:resp, 'ok', 0)
         call s:set_status('Compute status error')
         call s:stop_compute_timer()

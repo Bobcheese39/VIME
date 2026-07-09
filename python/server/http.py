@@ -33,13 +33,19 @@ def _parse_request_json(handler):
     return payload if isinstance(payload, dict) else None
 
 
-def make_handler(dispatch_fn, close_handles_fn):
+def make_handler(dispatch_fn, close_handles_fn, mark_activity_fn=None):
     """Create an HTTP request handler class.
 
     Args:
         dispatch_fn: callable(payload) -> dict, routes commands.
         close_handles_fn: callable(), closes open file handles on shutdown.
+        mark_activity_fn: optional callable(), called on each request to reset
+            the idle timer.
     """
+
+    def _touch():
+        if mark_activity_fn is not None:
+            mark_activity_fn()
 
     class VimeHandler(BaseHTTPRequestHandler):
         server_version = "VIMEHTTP/1.0"
@@ -53,6 +59,7 @@ def make_handler(dispatch_fn, close_handles_fn):
             self.wfile.write(body)
 
         def do_GET(self):
+            _touch()
             parsed = urlparse(self.path)
             if parsed.path == "/health":
                 self._send_json(200, {"ok": True})
@@ -60,6 +67,7 @@ def make_handler(dispatch_fn, close_handles_fn):
             self._send_json(404, {"ok": False, "error": "Not found"})
 
         def do_POST(self):
+            _touch()
             parsed = urlparse(self.path)
             if parsed.path == "/shutdown":
                 logger.info("Shutdown requested via HTTP")

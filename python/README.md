@@ -2,6 +2,8 @@
 
 Persistent HTTP server that loads HDF5 files into memory and serves table data, metadata, and plots to the Vim frontend. Built on Python's `http.server` with a threaded handler, requiring no external web framework.
 
+The server is a long-lived, shared daemon: it is started once (lazily, by the launcher) and reused by every Vim instance. State is isolated **per file** via `Session` objects keyed by file path, so multiple concurrent Vim instances do not clobber each other. The daemon shuts itself down after an idle period (`--idle-timeout` / `VIME_IDLE_TIMEOUT`), and heavy imports (pandas, h5py, numpy, tabulate, scikit-learn) are deferred until first use to minimize startup latency.
+
 ## Architecture
 
 ```mermaid
@@ -43,22 +45,22 @@ sequenceDiagram
 
     Vim->>HTTP: POST /open {file}
     HTTP->>Dispatch: dispatch(payload)
-    Dispatch->>State: close_handles()
-    Dispatch->>Loader: open(filepath)
+    Dispatch->>State: get_session(file, create=True)
+    Dispatch->>Loader: session.loader.open(filepath)
     Loader->>HDF5: pd.HDFStore or h5py.File
     Loader-->>Dispatch: table list
     Dispatch-->>Vim: {ok, tables}
 
-    Vim->>HTTP: POST /table {name}
+    Vim->>HTTP: POST /table {name, file}
     HTTP->>Dispatch: dispatch(payload)
-    Dispatch->>State: load_table(name)
-    State->>Loader: load_table(name)
+    Dispatch->>State: session_for(payload)
+    Dispatch->>Loader: session.load_table(name)
     Loader->>HDF5: read DataFrame
     Dispatch-->>Vim: {ok, content, columns}
 
-    Vim->>HTTP: POST /plot {cols, type, width, height}
+    Vim->>HTTP: POST /plot {cols, type, width, height, file}
     HTTP->>Dispatch: dispatch(payload)
-    Dispatch->>State: current_df
+    Dispatch->>State: session.current_df
     Dispatch-->>Vim: {ok, content}
 ```
 
@@ -66,26 +68,46 @@ sequenceDiagram
 
 ### vime_server.py
 
-Server entry point. Parses CLI arguments (`--host`, `--port`, `--port-retries`), creates a `ServerState`, builds the HTTP handler via `make_handler()`, binds the server with port fallback, and runs `serve_forever()`. Handles graceful shutdown on `KeyboardInterrupt`.
+Server entry point. Parses CLI arguments (`--host`, `--port`, `--port-retries`, `--idle-timeout`), creates a `ServerState`, builds the HTTP handler via `make_handler()`, binds the server with port fallback, starts the idle watcher thread, and runs `serve_forever()`. Handles graceful shutdown on `KeyboardInterrupt`. `start_idle_watcher()` runs a daemon thread that compares `time.monotonic() - state.last_activity` against the idle timeout and calls `httpd.shutdown()` when it is exceeded (`--idle-timeout 0` disables it).
 
 ### ServerState (`server/state.py`)
 
-Central state object passed to all command handlers. Holds:
+Manager object passed to all command handlers. Holds a dict of per-file `Session` objects (an `OrderedDict` in LRU order), the shared `Config`, a lock, and the `last_activity` timestamp used by the idle watcher.
+
+| Attribute        | Type                  | Description                                            |
+|------------------|-----------------------|--------------------------------------------------------|
+| `sessions`       | `OrderedDict`         | Normalized file path -> `Session` (LRU order)          |
+| `max_sessions`   | `int`                 | Max files kept open (`VIME_MAX_SESSIONS`, default 16)  |
+| `last_activity`  | `float`               | `time.monotonic()` of the last request                 |
+| `config`         | `Config` or `None`    | Shared column ordering configuration                   |
+
+Key methods:
+- `get_session(path, create=False)` -- returns the `Session` for a path, creating it (and evicting + closing the LRU session beyond `max_sessions`) when requested; touches LRU order.
+- `session_for(payload, create=False)` -- resolves the session from a request's `file` field.
+- `mark_activity()` -- resets the idle timer (called on every request via the HTTP layer).
+- `close_handles()` -- closes file handles for all sessions (used on shutdown).
+
+### Session (`server/state.py`)
+
+Per-file state, keyed by normalized file path:
 
 | Attribute         | Type                      | Description                                        |
 |-------------------|---------------------------|----------------------------------------------------|
+| `filepath`        | `str`                     | Original file path for this session                |
 | `loader`          | `DataLoader`              | HDF5 file reader                                   |
 | `current_df`      | `DataFrame` or `None`     | Last-loaded table (used by plot)                   |
 | `current_table`   | `str` or `None`           | Name of the last-loaded table                      |
 | `virtual_tables`  | `dict`                    | Tables created by compute jobs                     |
 | `compute_thread`  | `Thread` or `None`        | Background compute thread                          |
 | `compute`         | `ComputeState`            | Current compute job status                         |
-| `config`          | `Config` or `None`        | Column ordering configuration                      |
+| `plot_thread`     | `Thread` or `None`        | Background plot thread                             |
+| `plot`            | `PlotState`               | Current plot job status                            |
 
 Key methods:
+- `ensure_open()` -- reopens the file handle if it was closed by LRU eviction (makes eviction transparent).
 - `load_table(name)` -- loads from virtual tables first, then falls back to the file-backed loader.
 - `get_table_list()` -- merges file-backed tables with virtual tables.
-- `close_handles()` -- closes all open HDF5 file handles.
+- `close()` -- closes this session's HDF5 file handles.
 
 ### ComputeState / ComputeStatus (`server/state.py`)
 
@@ -128,10 +150,10 @@ Unicode braille plotting engine. Each character cell encodes a 2x4 sub-pixel gri
 
 ### VimeHTTPServer / VimeHandler (`server/http.py`)
 
-Threaded HTTP server (`ThreadingHTTPServer` subclass) with strict port exclusivity (`allow_reuse_address = False`). The handler class is created dynamically by `make_handler(dispatch_fn, close_handles_fn)` to capture the dispatch and cleanup functions in a closure.
+Threaded HTTP server (`ThreadingHTTPServer` subclass) with strict port exclusivity (`allow_reuse_address = False`). The handler class is created dynamically by `make_handler(dispatch_fn, close_handles_fn, mark_activity_fn)` to capture the dispatch, cleanup, and idle-reset callbacks in a closure. Every request (including `GET /health`) calls `mark_activity_fn` to reset the idle timer.
 
 Routes:
-- `GET /health` -- returns `{"ok": true}`
+- `GET /health` -- returns `{"ok": true}` (also used as the Vim keepalive ping)
 - `POST /shutdown` -- closes handles, responds, then shuts down the server in a daemon thread
 - `POST /{cmd}` -- extracts the command from the URL path, parses the JSON body, injects `cmd` into the payload, and calls `dispatch_fn`
 
@@ -151,7 +173,7 @@ Routes command names to handler functions:
 | `compute_start`   | `commands.compute.handle_start` |
 | `compute_status`  | `commands.compute.handle_status` |
 
-All handlers receive `(state, payload)` and return a dict. Exceptions are caught and returned as `{"ok": false, "error": "..."}`.
+All handlers receive `(state, payload)` and return a dict. Each handler resolves its `Session` from `payload["file"]` via `state.session_for(...)`, so requests other than `open` must include the `file` field. Exceptions are caught and returned as `{"ok": false, "error": "..."}`.
 
 ### NumpyEncoder (`server/formatters.py`)
 
@@ -161,27 +183,27 @@ All handlers receive `(state, payload)` and return a dict. Exceptions are caught
 
 #### open.py
 
-Validates the file path, closes existing handles, calls `state.loader.open(filepath)`, and returns `{"ok": true, "tables": [...]}`.
+Validates the file path, gets-or-creates the `Session` for it (`state.get_session(file, create=True)`), opens the file if it is not already open, and returns `{"ok": true, "tables": [...]}`.
 
 #### table.py
 
-Loads a table by name as a DataFrame, applies column config ordering, formats with `tabulate` (plain format), and returns the formatted text with a header line showing shape info.
+Resolves the session from `payload["file"]`, ensures the file is open, loads a table by name as a DataFrame, applies column config ordering, formats with `tabulate` (plain format, imported lazily), and returns the formatted text with a header line showing shape info.
 
 #### plot.py
 
-Generates a braille plot from the currently loaded DataFrame (`state.current_df`). Resolves column references (by integer index or string name), converts to float, removes NaN pairs, and calls `braille_plot()`. Returns the plot as a string.
+Generates a braille plot from the session's currently loaded DataFrame (`session.current_df`). Resolves column references (by integer index or string name), converts to float, removes NaN pairs, and calls `braille_plot()` (numpy and the plotter are imported lazily). Returns the plot as a string. Plot jobs run per session.
 
 #### info.py
 
-Loads a table and returns metadata: table name, shape (`rows x cols`), column names with dtypes, and a numeric summary (`df.describe()`). Formatted with `tabulate`.
+Resolves the session, loads a table, and returns metadata: table name, shape (`rows x cols`), column names with dtypes, and a numeric summary (`df.describe()`). Formatted with `tabulate` (numpy and tabulate imported lazily).
 
 #### compute.py
 
-Manages background compute jobs. `handle_start` checks that no job is already running, then launches `test_compute()` in a daemon thread. The thread stores its result as a virtual table in `state.virtual_tables` under a timestamped name (`/__computed__/compute_YYYYMMDD_HHMMSS`). `handle_status` returns the current `ComputeState` so the Vim plugin can poll for completion.
+Manages background compute jobs per session. `handle_start` checks that no job is already running for the session, then launches `test_compute()` (imported lazily, which pulls in scikit-learn) in a daemon thread. The thread stores its result as a virtual table in `session.virtual_tables` under a timestamped name (`/__computed__/compute_YYYYMMDD_HHMMSS`). `handle_status` returns the session's current `ComputeState` so the Vim plugin can poll for completion.
 
 ## HTTP API Reference
 
-All command endpoints accept `POST` with a JSON body and return JSON. Every response includes an `ok` boolean field.
+All command endpoints accept `POST` with a JSON body and return JSON. Every response includes an `ok` boolean field. All commands except `/health` and `/shutdown` must include a `file` field identifying the session (the open file's path); the examples below omit it for brevity except where noted.
 
 ### GET /health
 
@@ -217,12 +239,13 @@ Load a table and return its formatted content.
 
 **Request:**
 ```json
-{"name": "/experiment/results"}
+{"name": "/experiment/results", "file": "/path/to/data.h5"}
 ```
 
 | Field  | Type   | Default | Description                                |
 |--------|--------|---------|--------------------------------------------|
 | `name` | string | --      | Table path within the HDF5 file            |
+| `file` | string | --      | Path identifying the session               |
 
 **Response:**
 ```json
@@ -240,7 +263,7 @@ Generate a braille Unicode plot from the currently loaded table.
 
 **Request:**
 ```json
-{"cols": [0, 1], "type": "line", "width": 72, "height": 20}
+{"cols": [0, 1], "type": "line", "width": 72, "height": 20, "file": "/path/to/data.h5"}
 ```
 
 | Field    | Type        | Default  | Description                              |
@@ -249,6 +272,9 @@ Generate a braille Unicode plot from the currently loaded table.
 | `type`   | string      | `"line"` | Plot type: `"line"` or `"scatter"`       |
 | `width`  | int         | `72`     | Plot width in characters                 |
 | `height` | int         | `20`     | Plot height in character rows            |
+| `file`   | string      | --       | Path identifying the session             |
+
+The async variants `/plot_start` and `/plot_status` follow the same start/poll pattern as compute and likewise require `file`.
 
 **Response:**
 ```json
@@ -264,7 +290,7 @@ Return metadata for a table.
 
 **Request:**
 ```json
-{"name": "/experiment/results"}
+{"name": "/experiment/results", "file": "/path/to/data.h5"}
 ```
 
 **Response:**
@@ -281,7 +307,7 @@ Start a background compute job.
 
 **Request:**
 ```json
-{}
+{"file": "/path/to/data.h5"}
 ```
 
 **Response:**
@@ -312,11 +338,11 @@ Poll the current compute job status.
 
 Cross-platform launcher that orchestrates the server and Vim lifecycle:
 
-1. **Check for existing server** -- scans the port range for a healthy server (`GET /health`).
-2. **Start server** (if needed) -- spawns `vime_server.py` as a subprocess. On Windows, uses `CREATE_NEW_PROCESS_GROUP` to isolate it from Ctrl-C.
+1. **Check for existing server** -- scans the port range for a healthy, already-running daemon (`GET /health`) and reuses it if found.
+2. **Start server** (if needed) -- spawns `vime_server.py` **detached** so it outlives the launcher and Vim. On Windows, uses `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`; on POSIX, `start_new_session=True`. Passes `--idle-timeout`.
 3. **Wait for health** -- polls until the server responds healthy or a timeout expires (default 30s).
-4. **Launch Vim** -- runs `vim` with `--cmd` arguments to set `g:vime_http_host`, `g:vime_http_port`, and optionally `g:vime_owns_server`.
-5. **Cleanup** -- after Vim exits, sends `POST /shutdown` and terminates the server process if it was started by the wrapper.
+4. **Launch Vim** -- runs `vim` with `--cmd` arguments to set `g:vime_http_host` and `g:vime_http_port`.
+5. **Exit** -- after Vim exits, the launcher returns and the daemon is intentionally **left running**. It reaps itself via its idle timeout.
 
 ### Environment Variables
 
@@ -327,6 +353,8 @@ Cross-platform launcher that orchestrates the server and Vim lifecycle:
 | `VIME_HTTP_PORT`               | `51789`      | Starting port number                     |
 | `VIME_HTTP_PORT_RETRIES`       | `100`        | Number of sequential ports to try        |
 | `VIME_SERVER_STARTUP_TIMEOUT`  | `30`         | Seconds to wait for server health        |
+| `VIME_IDLE_TIMEOUT`            | `900`        | Idle seconds before the daemon self-exits (`0` disables) |
+| `VIME_MAX_SESSIONS`            | `16`         | Max files kept open in memory (LRU eviction beyond this) |
 
 ## Running the Server Standalone
 
@@ -334,8 +362,10 @@ The server can be started independently of the wrapper for development or testin
 
 ```bash
 cd python
-python vime_server.py --host 127.0.0.1 --port 51789
+python vime_server.py --host 127.0.0.1 --port 51789 --idle-timeout 0
 ```
+
+(`--idle-timeout 0` disables the self-shutdown, convenient while developing.)
 
 Then connect Vim manually:
 

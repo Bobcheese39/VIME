@@ -1,6 +1,10 @@
-"""Shared server state, compute types, and common helpers."""
+"""Shared server state, per-file sessions, compute types, and common helpers."""
 
 import logging
+import os
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -40,28 +44,40 @@ class PlotState:
     error: Optional[str] = None
 
 
-class ServerState:
-    """Shared state that holds H5 data and is passed to command handlers."""
+def normalize_path(path):
+    """Normalize a path for use as a session key and same-file comparisons."""
+    return os.path.normcase(os.path.abspath(path or ""))
 
-    def __init__(self):
+
+class Session:
+    """Per-file state: a data handle plus its current table, virtual tables,
+    and any in-flight compute/plot jobs.
+
+    Sessions are keyed by normalized file path so multiple Vim instances can
+    share a single daemon without clobbering each other's state.
+    """
+
+    def __init__(self, filepath, config=None):
+        self.filepath = filepath        # Original (un-normalized) file path
+        self.config = config            # Shared column-order config
         self.loader = DataLoader()
-        self.current_df = None     # Last-fetched DataFrame
-        self.current_table = None  # Name of the last-fetched table
-        self.virtual_tables = {}   # Virtual tables created by compute jobs
+        self.current_df = None          # Last-fetched DataFrame
+        self.current_table = None       # Name of the last-fetched table
+        self.virtual_tables = {}        # Virtual tables created by compute jobs
         self.compute_thread = None
         self.compute = ComputeState()
         self.plot_thread = None
         self.plot = PlotState()
-        self.config = None
-        try:
-            self.config = Config()
-            logger.info("Table config initialized")
-        except Exception as exc:
-            logger.warning("Table config disabled: %s", exc)
 
-    def close_handles(self):
-        """Close any open file handles."""
-        logger.info("Closing open file handles")
+    def ensure_open(self):
+        """Reopen the file handle if it was closed (e.g. by LRU eviction)."""
+        if not self.loader.is_open and self.filepath:
+            logger.info("Re-opening evicted/closed file: %s", self.filepath)
+            self.loader.open(self.filepath)
+
+    def close(self):
+        """Close any open file handles for this session."""
+        logger.info("Closing file handles for session: %s", self.filepath)
         self.loader.close()
 
     def load_table(self, name):
@@ -90,3 +106,83 @@ class ServerState:
                 for entry in self.virtual_tables.values()
             )
         return tables
+
+
+class ServerState:
+    """Manages per-file sessions, shared config, and idle-activity tracking."""
+
+    def __init__(self, max_sessions=None):
+        if max_sessions is None:
+            max_sessions = _safe_int(os.environ.get("VIME_MAX_SESSIONS", "16"), 16)
+        self.max_sessions = max_sessions
+        self.sessions = OrderedDict()   # normalized path -> Session (LRU order)
+        self.lock = threading.Lock()
+        self.last_activity = time.monotonic()
+        self.config = None
+        try:
+            self.config = Config()
+            logger.info("Table config initialized")
+        except Exception as exc:
+            logger.warning("Table config disabled: %s", exc)
+
+    def mark_activity(self):
+        """Record that a request was just handled (resets the idle timer)."""
+        self.last_activity = time.monotonic()
+
+    def get_session(self, filepath, create=False):
+        """Return the Session for *filepath*, optionally creating it.
+
+        Creating a session may evict the least-recently-used session (closing
+        its file handles) when over ``max_sessions``. Accessing a session moves
+        it to the most-recently-used position.
+        """
+        if not filepath:
+            return None
+        key = normalize_path(filepath)
+        with self.lock:
+            session = self.sessions.get(key)
+            if session is not None:
+                self.sessions.move_to_end(key)
+                return session
+            if not create:
+                return None
+            session = Session(filepath, config=self.config)
+            self.sessions[key] = session
+            self._evict_if_needed()
+            return session
+
+    def session_for(self, payload, create=False):
+        """Resolve the session referenced by a request payload's 'file'."""
+        return self.get_session(payload.get("file", ""), create=create)
+
+    def _evict_if_needed(self):
+        """Close and drop least-recently-used sessions beyond the cap.
+
+        Caller must hold ``self.lock``.
+        """
+        while len(self.sessions) > self.max_sessions:
+            old_key, old_session = self.sessions.popitem(last=False)
+            logger.info("Evicting LRU session: %s", old_key)
+            try:
+                old_session.close()
+            except Exception as exc:
+                logger.warning("Failed to close evicted session %s: %s", old_key, exc)
+
+    def close_handles(self):
+        """Close all open file handles across all sessions."""
+        logger.info("Closing all session file handles")
+        with self.lock:
+            for session in self.sessions.values():
+                try:
+                    session.close()
+                except Exception as exc:
+                    logger.warning("Failed to close session %s: %s", session.filepath, exc)
+
+
+def _safe_int(value, default, minimum=1):
+    """Parse *value* as int; return *default* when invalid or below *minimum*."""
+    try:
+        n = int(value)
+        return n if n >= minimum else default
+    except (ValueError, TypeError):
+        return default

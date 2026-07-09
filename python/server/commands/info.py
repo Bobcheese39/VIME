@@ -2,25 +2,32 @@
 
 import logging
 
-import numpy as np
-from tabulate import tabulate
-
 logger = logging.getLogger("vime")
 
 
 def handle(state, payload):
     """Return detailed info about a table."""
-    if not state.loader.is_open:
+    session = state.session_for(payload)
+    if session is None:
         logger.warning("Info requested with no file open")
         return {"ok": False, "error": "No file open"}
+
+    try:
+        session.ensure_open()
+    except Exception as exc:
+        logger.warning("Failed to reopen session %s: %s", session.filepath, exc)
+        return {"ok": False, "error": str(exc)}
 
     name = payload.get("name", "")
     logger.debug("Info requested for table: %s", name)
 
-    df = state.load_table(name)
+    df = session.load_table(name)
     if df is None:
         logger.warning("Info table not found: %s", name)
         return {"ok": False, "error": f"Table not found: {name}"}
+
+    import numpy as np
+    from tabulate import tabulate
 
     lines = []
     lines.append(f"Table: {name}")

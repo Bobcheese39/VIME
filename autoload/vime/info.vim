@@ -4,7 +4,7 @@
 scriptencoding utf-8
 
 function! vime#info#show(name) abort
-    let l:resp = vime#http#send({'cmd': 'info', 'name': a:name})
+    let l:resp = vime#http#send({'cmd': 'info', 'name': a:name, 'file': vime#state#get('current_file')})
 
     if !vime#http#check_response(l:resp, 'Failed to get info')
         return

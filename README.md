@@ -32,6 +32,8 @@ flowchart LR
 
 The Python backend runs as a separate localhost HTTP server started by the launcher script. Vim communicates with it using `curl` for all requests (JSON payloads over HTTP POST). The H5 file is opened once and kept in memory by the backend, making subsequent table loads, plots, and info queries fast. Because the backend is a separate process, crashes in Python do not affect Vim.
 
+The backend is a **persistent, shared daemon**: it is started lazily on the first `vime` launch, kept running across Vim sessions (so opening files after the first is instant), and shared by every Vim instance. Each open file gets its own isolated **session** on the server (keyed by file path), so viewing several files at once never mixes their state. The daemon reaps itself after a configurable idle period (`VIME_IDLE_TIMEOUT`); while any VIME buffer is open, Vim sends a lightweight keepalive ping to prevent the idle timeout from firing. Heavy Python imports (pandas, h5py, numpy, etc.) are deferred until first use to keep startup fast.
+
 ## Requirements
 
 - **Vim** with JSON support (`+json`) for `json_encode()` / `json_decode()`
@@ -95,8 +97,12 @@ The wrapper and plugin use these environment variables (optional):
 - `VIME_HTTP_PORT` (default: `51789`, used as the starting port)
 - `VIME_HTTP_PORT_RETRIES` (default: `100`, number of incremental ports to try)
 - `VIME_PYTHON` (default: `python3` or `python` on Windows)
+- `VIME_IDLE_TIMEOUT` (default: `900` seconds; set to `0` to disable. The daemon shuts itself down after this many seconds with no requests.)
+- `VIME_MAX_SESSIONS` (default: `16`. Maximum number of files kept open in memory at once; the least-recently-used file's handles are closed beyond this, and reopened transparently on next access.)
 
-When the backend starts, it first tries `VIME_HTTP_PORT`. If that port is in use, it increments by one until it finds an open port (up to `VIME_HTTP_PORT_RETRIES` attempts). This allows running multiple VIME instances concurrently without manual port changes.
+When the backend starts, it first tries `VIME_HTTP_PORT`. If that port is in use, it increments by one until it finds an open port (up to `VIME_HTTP_PORT_RETRIES` attempts). The launcher reuses an already-running healthy daemon when it finds one, so the second and subsequent `vime` launches attach to the existing process instead of paying startup cost again.
+
+The Vim keepalive interval can be tuned with `g:vime_keepalive_ms` (default `120000`, i.e. 2 minutes); keep it well under `VIME_IDLE_TIMEOUT`.
 
 PowerShell helper:
 
@@ -130,7 +136,7 @@ When you open an H5 file, you see a list of all tables with their dimensions:
 | `,i`      | Show info (shape, dtypes, summary)  |
 | `,r`      | Refresh the table list              |
 | `,c`      | Start a background compute job      |
-| `,q`      | Quit VIME and stop the backend      |
+| `,q`      | Close this Vim's VIME buffers (the shared daemon keeps running) |
 
 ### Table Content View
 
@@ -225,7 +231,7 @@ VIME supports two backends for reading HDF5 files:
 
 ## Troubleshooting
 
-- **"Server not running"**: Use the `vime` wrapper to start the HTTP server before opening an `.h5`.
+- **"Server not running"**: Use the `vime` wrapper to start the HTTP server before opening an `.h5`. The daemon persists between sessions but reaps itself after `VIME_IDLE_TIMEOUT` of inactivity; relaunch with the wrapper (or raise/disable the timeout) if it has shut down.
 - **"curl not found"**: Install curl and ensure it is on your PATH.
 - **Large tables are slow**: Consider using smaller HDF5 files or filtering data before loading.
 - **Check server errors**: Python server logs go to stderr (terminal where the wrapper started).

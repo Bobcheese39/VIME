@@ -12,10 +12,17 @@ from server.commands import compute as cmd_compute
 logger = logging.getLogger("vime")
 
 
-def _handle_close(state, _payload):
-    """Close the store (HTTP shutdown handled separately)."""
+def _handle_close(state, payload):
+    """Close a single session's handles, or all if no file is given.
+
+    HTTP shutdown is handled separately by the /shutdown route.
+    """
     logger.info("Close requested")
-    state.close_handles()
+    session = state.session_for(payload)
+    if session is not None:
+        session.close()
+    else:
+        state.close_handles()
     return {"ok": True}
 
 

@@ -48,7 +48,8 @@ function! vime#nav#close_plot_buffers() abort
 endfunction
 
 function! vime#nav#quit() abort
-    " Close all VIME buffers and stop server
+    " Close this Vim's VIME buffers only. The backend is a shared, persistent
+    " daemon, so we leave it running (it reaps itself via its idle timeout).
     let l:bufs = []
     for l:buf in getbufinfo()
         if getbufvar(l:buf.bufnr, 'vime_type', '') !=# ''
@@ -61,7 +62,6 @@ function! vime#nav#quit() abort
         catch
         endtry
     endfor
-    call vime#http#stop_server()
     " Open a new empty buffer so we don't exit vim
     enew
 endfunction

@@ -30,6 +30,7 @@ function! vime#plot#do_plot(col1, col2, plot_type, ...) abort
         \ 'type': a:plot_type,
         \ 'width': l:plot_width,
         \ 'height': l:plot_height,
+        \ 'file': vime#state#get('current_file'),
         \ })
 
     if !vime#http#check_response(l:resp, 'Failed to start plot')
@@ -62,7 +63,7 @@ function! s:plot_poll(timer_id) abort
         return
     endif
 
-    let l:resp = vime#http#send({'cmd': 'plot_status'})
+    let l:resp = vime#http#send({'cmd': 'plot_status', 'file': vime#state#get('current_file')})
     if type(l:resp) != v:t_dict || !get(l:resp, 'ok', 0)
         call s:stop_plot_timer()
         call s:show_error_in_buf('Plot status error')
