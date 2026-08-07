@@ -19,7 +19,7 @@ def dispatch(state, payload):
     handlers = {
         "open": cmd_open.handle,
         "list_tables": cmd_list_tables.handle,
-        "table": cmd_table.handle,
+        "table_page": cmd_table.handle_page,
         "info": cmd_info.handle,
         "plot_start": cmd_plot.handle_start,
         "plot_status": cmd_plot.handle_status,

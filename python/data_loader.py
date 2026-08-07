@@ -57,7 +57,9 @@ class DataLoader:
         pandas_ok = False
         try:
             store = pd.HDFStore(filepath, mode="r")
-            keys = store.keys()
+            # Recent pandas/PyTables combinations can expose a synthetic "/"
+            # key for mixed fixed/table stores; it is not a readable storer.
+            keys = [key for key in store.keys() if key != "/"]
             if keys:
                 # Successfully opened with pandas and has tables
                 self.store = store
@@ -95,30 +97,81 @@ class DataLoader:
             return self._get_table_list_pandas()
         return []
 
-    def load_table(self, name):
+    def load_table(self, name, columns=None):
         """Load a table/dataset as a DataFrame from either backend."""
         logger.debug("Loading table: %s (backend=%s)", name, self.backend)
         if self.backend == "pandas":
             if name not in self.store:
                 logger.warning("Table not found in pandas store: %s", name)
                 return None
-            return self.store[name]
+            storer = self.store.get_storer(name)
+            if columns and getattr(storer, "is_table", False):
+                return self.store.select(name, columns=columns)
+            return self._select_columns(self.store[name], columns)
         if self.backend == "h5py":
-            return self._h5py_read_dataset(name)
+            return self._h5py_read_dataset(name, columns=columns)
         return None
+
+    def load_table_slice(self, name, start, stop, columns=None):
+        """Load rows ``start:stop`` without reading the complete dataset.
+
+        Pandas fixed-format stores cannot be sliced by PyTables, so they use
+        the unavoidable full-load fallback before applying ``iloc``.
+        """
+        start = max(0, int(start))
+        stop = max(start, int(stop))
+        logger.debug(
+            "Loading table slice: %s[%d:%d] (backend=%s)",
+            name, start, stop, self.backend,
+        )
+
+        if self.backend == "pandas":
+            if name not in self.store:
+                return None
+            storer = self.store.get_storer(name)
+            if getattr(storer, "is_table", False):
+                df = self.store.select(
+                    name, start=start, stop=stop, columns=columns or None
+                )
+                return df
+            else:
+                # ponytail: fixed stores have no partial-read API; callers
+                # should convert large fixed stores to table format.
+                df = self.store[name].iloc[start:stop]
+            return self._select_columns(df, columns)
+
+        if self.backend == "h5py":
+            return self._h5py_read_dataset(name, start=start, stop=stop, columns=columns)
+        return None
+
+    @staticmethod
+    def _select_columns(df, columns):
+        """Select columns by their display names while preserving order."""
+        if not columns:
+            return df
+        by_name = {str(column): column for column in df.columns}
+        selected = [by_name[str(column)] for column in columns if str(column) in by_name]
+        return df.loc[:, selected]
 
     def _get_table_list_pandas(self):
         """Return table metadata using the pandas HDFStore backend."""
         tables = []
         for key in self.store.keys():
+            if key == "/":
+                continue
             try:
                 storer = self.store.get_storer(key)
-                nrows = int(storer.nrows) if hasattr(storer, "nrows") else "?"
+                shape = getattr(storer, "shape", None)
+                raw_nrows = getattr(storer, "nrows", None)
+                nrows = int(raw_nrows if raw_nrows is not None else shape[0])
                 if hasattr(storer, "ncols"):
-                    ncols = int(storer.ncols)
+                    raw_ncols = storer.ncols
+                    ncols = int(raw_ncols if raw_ncols is not None else shape[1])
                 elif hasattr(storer, "attrs") and hasattr(storer.attrs, "non_index_axes"):
                     axes = storer.attrs.non_index_axes
                     ncols = int(len(axes[0][1])) if axes else "?"
+                elif shape is not None and len(shape) > 1:
+                    ncols = int(shape[1])
                 else:
                     ncols = "?"
             except Exception as exc:
@@ -147,10 +200,11 @@ class DataLoader:
         logger.debug("Collected %d h5py datasets", len(datasets))
         return datasets
 
-    def _h5py_read_dataset(self, name):
+    def _h5py_read_dataset(self, name, start=None, stop=None, columns=None):
         """Read an h5py dataset and return it as a DataFrame."""
         import pandas as pd
         import h5py
+        import numpy as np
 
         # Strip leading slash for h5py lookup
         key = name.lstrip("/")
@@ -162,26 +216,36 @@ class DataLoader:
             logger.warning("H5 object is not a dataset: %s", name)
             return None
 
-        arr = ds[()]
+        if ds.ndim == 0:
+            arr = ds[()]
+        elif start is None:
+            arr = ds[()]
+        else:
+            arr = ds[start:stop]
         logger.debug("Read dataset %s with shape %s", name, getattr(arr, "shape", "scalar"))
 
         # Handle structured arrays (compound dtypes, e.g. from MATLAB)
         if arr.dtype.names is not None:
-            return pd.DataFrame({col: arr[col] for col in arr.dtype.names})
+            df = pd.DataFrame({col: arr[col] for col in arr.dtype.names})
+            return self._select_columns(df, columns)
 
         # Scalar
         if arr.ndim == 0:
-            return pd.DataFrame({"value": [arr.item()]})
+            df = pd.DataFrame({"value": [arr.item()]})
+            if start is not None and start > 0:
+                df = df.iloc[0:0]
+            return self._select_columns(df, columns)
 
         # 1-D array
         if arr.ndim == 1:
-            return pd.DataFrame({0: arr})
+            return self._select_columns(pd.DataFrame({0: arr}), columns)
 
         # 2-D array
         if arr.ndim == 2:
-            return pd.DataFrame(arr)
+            return self._select_columns(pd.DataFrame(arr), columns)
 
         # Higher-dimensional: flatten trailing dims
-        reshaped = arr.reshape(arr.shape[0], -1)
-        return pd.DataFrame(reshaped)
+        trailing = int(np.prod(arr.shape[1:]))
+        reshaped = arr.reshape((arr.shape[0], trailing))
+        return self._select_columns(pd.DataFrame(reshaped), columns)
 

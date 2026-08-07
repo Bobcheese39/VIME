@@ -4,5 +4,3 @@
 
 
 if 'successful' not found in the table names, add a warning
-
-add --persist flag to vime_server, keeps the server alive when vim is closed

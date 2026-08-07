@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""
-VIME Server - Persistent Python backend for the VIME Vim H5 viewer.
+"""Persistent HTTP/JSON backend for the VIME Python terminal frontend.
 
-Communicates with Vim over HTTP using JSON request/response payloads.
-Protocol: Client sends POST requests with JSON payloads, server responds with JSON.
-
-Keeps HDF5 data in memory so files only need to be loaded once.
+Keeps HDF5 handles, per-file sessions, and background jobs alive across TUI
+runs. Table pages are read on demand rather than cached in full.
 """
 
 import sys

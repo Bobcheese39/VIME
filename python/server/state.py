@@ -45,17 +45,16 @@ class Session:
     """Per-file state: a data handle plus its current table, virtual tables,
     and any in-flight compute/plot jobs.
 
-    Sessions are keyed by normalized file path so multiple Vim instances can
-    share a single daemon without clobbering each other's state.
+    Sessions are keyed by normalized file path so multiple TUI runs can share
+    a single daemon without clobbering each other's state.
     """
 
     def __init__(self, filepath, config=None):
         self.filepath = filepath        # Original (un-normalized) file path
         self.config = config            # Shared column-order config
         self.loader = DataLoader()
-        self.current_df = None          # Last-fetched DataFrame
-        self.current_table = None       # Name of the last-fetched table
         self.virtual_tables = {}        # Virtual tables created by compute jobs
+        self.filtered_cache = None       # One ((dataset, filter), DataFrame) entry
         self.compute_thread = None
         self.compute = JobState()
         self.plot_thread = None
@@ -72,7 +71,7 @@ class Session:
         logger.info("Closing file handles for session: %s", self.filepath)
         self.loader.close()
 
-    def load_table(self, name):
+    def load_table(self, name, columns=None):
         """Load a table/dataset as a DataFrame from either backend.
 
         Returns:
@@ -80,9 +79,16 @@ class Session:
         """
         if name in self.virtual_tables:
             logger.debug("Loading virtual table: %s", name)
-            return self.virtual_tables[name]["df"]
+            return DataLoader._select_columns(self.virtual_tables[name]["df"], columns)
         logger.debug("Loading table from store: %s", name)
-        return self.loader.load_table(name)
+        return self.loader.load_table(name, columns=columns)
+
+    def load_table_slice(self, name, start, stop, columns=None):
+        """Load a bounded row slice from a stored or virtual table."""
+        if name in self.virtual_tables:
+            df = self.virtual_tables[name]["df"].iloc[start:stop]
+            return DataLoader._select_columns(df, columns)
+        return self.loader.load_table_slice(name, start, stop, columns)
 
     def get_table_list(self):
         """Return a list of dicts with table metadata."""

@@ -3,11 +3,9 @@
 Cross-platform VIME launcher.
 
 Starts the VIME Python backend (if not already running), discovers the
-bound port, launches Vim with the correct --cmd arguments, and cleans up
-on exit.
+bound port, and runs the standard-library Python TUI.
 
-Replaces the original bash-only scripts/vime wrapper and eliminates
-the curl dependency during startup.
+The detached backend intentionally outlives the TUI.
 """
 
 import argparse
@@ -48,7 +46,7 @@ logger = logging.getLogger("vime.launcher")
 
 
 def parse_args():
-    """Parse launcher arguments; return (args, vim_args)."""
+    """Parse launcher arguments."""
     parser = argparse.ArgumentParser(
         description="VIME launcher",
         allow_abbrev=False,
@@ -57,7 +55,8 @@ def parse_args():
         "-d", "--debug", action="store_true",
         help="Enable DEBUG logging and write to debug.txt",
     )
-    return parser.parse_known_args()
+    parser.add_argument("files", nargs="+", help="HDF5 files to open")
+    return parser.parse_args()
 
 
 def configure_debug_logging():
@@ -107,7 +106,7 @@ def find_healthy_port():
 
 def start_server(debug=False):
     """Launch ``vime_server.py`` detached so it persists after the launcher
-    (and Vim) exits, and return the Popen handle.
+    (and TUI) exits, and return the Popen handle.
     """
     cmd = [
         PYTHON_CMD,
@@ -124,7 +123,7 @@ def start_server(debug=False):
         kwargs["stdout"] = subprocess.DEVNULL
         kwargs["stderr"] = subprocess.DEVNULL
     # Detach the daemon so it outlives this launcher process. On Windows, use a
-    # new process group + DETACHED_PROCESS so Ctrl-C in the Vim console is not
+    # new process group + DETACHED_PROCESS so Ctrl-C in the TUI console is not
     # forwarded to it. On POSIX, start a new session.
     if sys.platform == "win32":
         detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
@@ -167,7 +166,7 @@ def terminate_server(server_proc):
 
 
 def main():
-    args, vim_args = parse_args()
+    args = parse_args()
     if args.debug:
         configure_debug_logging()
         logger.debug("Debug mode enabled")
@@ -180,7 +179,7 @@ def main():
     if existing is not None:
         active_port = existing
     else:
-        # 2. Start the server detached so it persists across Vim sessions.
+        # 2. Start the server detached so it persists across TUI sessions.
         server_proc = start_server(debug=args.debug)
 
         # 3. Wait for the server to bind and become healthy.
@@ -196,25 +195,14 @@ def main():
             sys.exit(1)
         active_port = port
 
-    # 4. Build the Vim command line.
-    vim_cmd = [
-        "vim",
-        "--cmd", "let g:vime_http_host='{}'".format(HOST),
-        "--cmd", "let g:vime_http_port={}".format(active_port),
-    ]
-    vim_cmd += vim_args  # pass through extra arguments
-
-    # 5. Launch Vim (blocking). The daemon is intentionally left running after
-    #    Vim exits; it reaps itself via its idle timeout.
-    vim_exit = 1
-    try:
-        result = subprocess.run(vim_cmd)
-        vim_exit = result.returncode
-    except FileNotFoundError:
-        print("VIME: 'vim' not found in PATH", file=sys.stderr)
-
-    sys.exit(vim_exit)
+    # 4. Run the TUI in-process. The daemon remains detached and reaps itself
+    #    via its idle timeout after the terminal frontend exits.
+    python_dir = os.path.join(ROOT_DIR, "python")
+    if python_dir not in sys.path:
+        sys.path.insert(0, python_dir)
+    from vime_tui import main as tui_main
+    return tui_main(HOST, active_port, args.files)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
