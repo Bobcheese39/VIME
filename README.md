@@ -39,17 +39,22 @@ vime first.h5 second.h5
 ```
 
 The shell and PowerShell wrappers both delegate to
-`scripts/vime_launcher.py`. With multiple files, use Left/Right in the dataset
-list to switch files.
+`scripts/vime_launcher.py`.
 
 Keys:
 
 - `j`/`k`: previous/next table page; counts work (`5j`)
 - `g`/`GG`: first/last page; `5g` and `5GG` offset from that edge
-- `h`/`l` or Left/Right: move one column
-- `b`/`e` or Ctrl-B/Ctrl-E: move one visible column viewport
+- `h`/`l`: move one column
+- Left/Right in a table: move one visible column viewport
 - Up/Down: move the selected row
-- Enter: open the selected dataset
+- Enter in the dataset list: open the selected table full-window
+- Right in the dataset list/sidebar: open or focus a table in a vertical split
+- Left in the sidebar: close the selected table when it is open
+- Left at the first table column: focus the sidebar
+- Up at the first row of a split table: change that split to horizontal
+- Tab: cycle focus through open table panes
+- `b`: focus the sidebar in split view, or go back outside prompts
 - Page Up/Page Down: change table page
 - `f`: filter with `column operator value` (for example `f 2 >= 10`)
 - `u`: clear the active filter
@@ -59,7 +64,7 @@ Keys:
 - `c`: start the demo background compute job
 - `r`: refresh the current view
 - `o`: open the numbered Default/Free Vim options
-- Escape: cancel or go back
+- Escape: cancel an active text prompt
 - `q`: quit the TUI (the daemon remains alive)
 
 Column numbers are 1-based. The plot prompt accepts column numbers or names,

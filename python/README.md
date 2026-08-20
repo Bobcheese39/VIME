@@ -192,9 +192,14 @@ path on normal exit, exceptions, and `KeyboardInterrupt`.
   `shutil.get_terminal_size()` resize checks
 
 The default TUI supports Vim counts and page motions (`5j`, `g`, `GG`),
-horizontal column viewports, filtering, and 1-based column reordering. `o`
-opens the Options menu. Free Vim temporarily restores the real terminal
-and opens a read-only text snapshot, then resumes the TUI when Vim exits.
+horizontal column viewports, filtering, and 1-based column reordering. Enter
+opens a table full-window; Right opens it beside the persistent dataset
+sidebar. Additional tables split vertically, and Up at the first row changes
+the focused split to horizontal. Tab cycles table panes, `b` focuses the
+sidebar (or goes back outside split view), Left at the first column focuses the
+sidebar, and Left on an open sidebar item closes that pane. `o` opens the
+Options menu. Free Vim temporarily restores the real terminal and opens a
+read-only text snapshot, then resumes the TUI when Vim exits.
 
 ### Options menu
 

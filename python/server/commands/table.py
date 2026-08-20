@@ -1,6 +1,7 @@
 """Table command handler."""
 
 import logging
+import numbers
 import operator
 
 from data_loader import DataLoader
@@ -54,6 +55,8 @@ def handle_page(state, payload):
     if columns is None:
         df = _apply_column_config(session, name, df)
 
+    float_formatting = payload.get("float_formatting") is True
+    path_formatting = payload.get("path_formatting") is True
     return {
         "ok": True,
         "dataset": name,
@@ -61,7 +64,13 @@ def handle_page(state, payload):
         "limit": limit,
         "total_rows": total_rows,
         "columns": [str(column) for column in df.columns],
-        "rows": [[_display_cell(value) for value in row] for row in df.itertuples(index=False, name=None)],
+        "rows": [
+            [
+                _display_cell(value, float_formatting, path_formatting)
+                for value in row
+            ]
+            for row in df.itertuples(index=False, name=None)
+        ],
     }
 
 
@@ -124,13 +133,20 @@ def _resolve_column(frame, reference):
         raise KeyError("unknown column {!r}".format(reference))
 
 
-def _display_cell(value):
+def _display_cell(value, float_formatting=False, path_formatting=False):
     """Convert a scalar to a stable, JSON-safe terminal string."""
     if value is None:
         return ""
     if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value)
+        value = value.decode("utf-8", errors="replace")
+    if (
+        float_formatting
+        and isinstance(value, numbers.Real)
+        and not isinstance(value, numbers.Integral)
+    ):
+        return "{:.2f}".format(value)
+    text = str(value)
+    return text.rsplit("/", 1)[-1] if path_formatting else text
 
 
 def _apply_column_config(session, table_name, df):

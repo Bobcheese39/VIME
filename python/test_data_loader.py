@@ -5,6 +5,7 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 import h5py
 import numpy as np
@@ -92,6 +93,13 @@ class DataLoaderSliceTest(unittest.TestCase):
         with h5py.File(path, "w") as handle:
             handle.create_dataset("rows", data=structured)
             handle.create_dataset("xy", data=np.arange(20).reshape(10, 2))
+            handle.create_dataset(
+                "formatted",
+                data=np.array(
+                    [(1.2345, b"/root/file.txt", 2)],
+                    dtype=[("value", "f8"), ("path", "S32"), ("count", "i8")],
+                ),
+            )
 
         state = ServerState()
         state.config = None
@@ -108,6 +116,23 @@ class DataLoaderSliceTest(unittest.TestCase):
         self.assertEqual(len(response["rows"]), 1)
         self.assertTrue(all(isinstance(cell, str) for cell in response["rows"][0]))
         json.dumps(response, allow_nan=False)
+
+        formatted = dispatch(state, {
+            "cmd": "table_page",
+            "file": path,
+            "dataset": "/formatted",
+            "float_formatting": True,
+            "path_formatting": True,
+        })
+        self.assertEqual(formatted["rows"][0], ["1.23", "file.txt", "2"])
+
+        unformatted = dispatch(state, {
+            "cmd": "table_page",
+            "file": path,
+            "dataset": "/formatted",
+        })
+        self.assertEqual(unformatted["rows"][0][1], "/root/file.txt")
+        self.assertNotEqual(unformatted["rows"][0][0], "1.23")
 
         filtered = dispatch(state, {
             "cmd": "table_page",
@@ -151,6 +176,29 @@ class DataLoaderSliceTest(unittest.TestCase):
             },
         })
         self.assertFalse(invalid["ok"])
+
+        page_before_plot = dispatch(state, {
+            "cmd": "table_page",
+            "file": path,
+            "dataset": "/xy",
+            "offset": 4,
+            "limit": 2,
+        })
+        self.assertEqual(len(page_before_plot["rows"]), 2)
+        with mock.patch(
+            "server.commands.plot.render_plot", return_value=["full table"]
+        ) as renderer:
+            full_plot_start = dispatch(state, {
+                "cmd": "plot_start",
+                "file": path,
+                "dataset": "/xy",
+                "columns": ["0", "1"],
+                "type": "line",
+            })
+            self.assertTrue(full_plot_start["ok"])
+            state.get_session(path).plot_thread.join(timeout=5)
+            plotted_series = renderer.call_args.args[0]
+            self.assertEqual(len(plotted_series[0]["x"]), 10)
 
         plot_start = dispatch(state, {
             "cmd": "plot_start",

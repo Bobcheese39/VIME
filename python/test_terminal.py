@@ -9,7 +9,8 @@ from terminal import (
 )
 import vime_tui
 from vime_tui import (
-    AppState, Application, OPTIONS, load_default_mode, render_frame, save_default_mode
+    AppState, Application, OPTIONS, TablePane, load_default_mode, render_frame,
+    save_default_mode
 )
 
 
@@ -46,6 +47,33 @@ class TerminalHelpersTest(unittest.TestCase):
         state.plot_content = "Plot\n\n⣿⣷⣤"
         self.assertEqual(len(render_frame(state, 40, 10).splitlines()), 10)
 
+    def test_table_pages_fill_the_available_pane_rows(self):
+        state = AppState(files=["sample.h5"], width=40, height=10, view="table")
+        state.table_columns = ["value"]
+        state.table_rows = [[str(index)] for index in range(5)]
+        state.total_rows = 5
+        frame = render_frame(state, state.width, state.height)
+        self.assertIn("4", frame.splitlines()[-2])
+
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state = state
+        self.assertEqual(app.pane_page_limit(state.active_pane), 5)
+
+        state.view = "split"
+        state.panes.append(TablePane("/other", table_columns=["value"]))
+        pane_width, pane_height = app.pane_size(state.panes[0])
+        state.panes[0].table_rows = [
+            [str(index)] for index in range(pane_height - 4)
+        ]
+        self.assertEqual(app.pane_page_limit(state.panes[0]), pane_height - 4)
+        self.assertIn(
+            str(pane_height - 5),
+            vime_tui.render_table(
+                state.panes[0], pane_width, pane_height, focused=True
+            )[-1],
+        )
+        app.close()
+
     def test_horizontal_view_and_vim_page_counts(self):
         state = AppState(files=["sample.h5"], width=12, height=10)
         state.view = "table"
@@ -69,13 +97,13 @@ class TerminalHelpersTest(unittest.TestCase):
         app.request_table = request
         for key in ("5", "j"):
             app.handle_key(key)
-        self.assertEqual(offsets[-1], 10)
+        self.assertEqual(offsets[-1], 25)
         for key in ("5", "g"):
             app.handle_key(key)
-        self.assertEqual(offsets[-1], 10)
+        self.assertEqual(offsets[-1], 25)
         for key in ("5", "G", "G"):
             app.handle_key(key)
-        self.assertEqual(offsets[-1], 18)
+        self.assertEqual(offsets[-1], 0)
         app.close()
 
     def test_yank_order_and_settings_round_trip(self):
@@ -125,9 +153,278 @@ class TerminalHelpersTest(unittest.TestCase):
                 self.assertEqual(app.state.view, "options")  # stays on the menu
                 app.handle_key(charset_key)
                 self.assertEqual(app.state.plot_charset, "simple")
+                float_key = str(OPTIONS.index(
+                    next(opt for opt in OPTIONS if opt["state_attr"] == "float_formatting")
+                ) + 1)
+                path_key = str(OPTIONS.index(
+                    next(opt for opt in OPTIONS if opt["state_attr"] == "path_formatting")
+                ) + 1)
+                app.handle_key(float_key)
+                app.handle_key(path_key)
+                self.assertEqual(app.state.float_formatting, "on")
+                self.assertEqual(app.state.path_formatting, "on")
                 app.close()
+
+                reloaded = Application("127.0.0.1", 1, ["sample.h5"])
+                self.assertEqual(reloaded.state.float_formatting, "on")
+                self.assertEqual(reloaded.state.path_formatting, "on")
+                reloaded.state.panes = [TablePane("/a")]
+                submitted = []
+                reloaded.submit = (
+                    lambda kind, command=None, payload=None, pane=None:
+                    submitted.append(payload) or True
+                )
+                reloaded.request_table()
+                self.assertTrue(submitted[-1]["float_formatting"])
+                self.assertTrue(submitted[-1]["path_formatting"])
+                reloaded.close()
             finally:
                 vime_tui.SETTINGS_PATH = original_path
+
+    def test_full_window_and_split_navigation(self):
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state.datasets = [
+            {"name": "/a", "rows": 2, "cols": 2},
+            {"name": "/b", "rows": 2, "cols": 2},
+        ]
+        requested = []
+        app.request_table = lambda offset=None, pane=None: requested.append(
+            pane or app.state.active_pane
+        )
+
+        app.handle_key("enter")
+        self.assertEqual(app.state.view, "table")
+        self.assertEqual(app.state.active_pane.dataset, "/a")
+        app.handle_key("b")
+        self.assertEqual((app.state.view, app.state.focus), ("datasets", "sidebar"))
+
+        app.handle_key("right")
+        self.assertEqual((app.state.view, app.state.focus), ("split", "table"))
+        app.handle_key("b")
+        app.handle_key("down")
+        app.handle_key("right")
+        self.assertEqual([pane.dataset for pane in app.state.panes], ["/a", "/b"])
+        self.assertEqual(len(requested), 2)
+
+        app.handle_response("table_page", {
+            "rows": [["1"]], "columns": ["a"], "offset": 0, "total_rows": 1,
+        }, app.state.panes[0])
+        self.assertEqual(app.state.panes[0].table_columns, ["a"])
+        self.assertEqual(app.state.panes[1].table_columns, [])
+        app.close()
+
+    def test_split_layout_focus_reorientation_and_close(self):
+        state = AppState(files=["sample.h5"], width=80, height=20)
+        state.datasets = [
+            {"name": "/a", "rows": 1, "cols": 4},
+            {"name": "/b", "rows": 1, "cols": 4},
+        ]
+        state.panes = [
+            TablePane("/a", table_columns=["a", "b", "c", "d"],
+                      table_rows=[["1", "2", "3", "4"]], total_rows=1),
+            TablePane("/b", table_columns=["a", "b", "c", "d"],
+                      table_rows=[["1", "2", "3", "4"]], total_rows=1),
+        ]
+        state.view = "split"
+        state.focus = "table"
+        state.active_pane_index = 1
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state = state
+        app.request_table = lambda offset=None, pane=None: None
+
+        vertical = render_frame(state, state.width, state.height)
+        self.assertEqual(len(vertical.splitlines()), state.height)
+        self.assertIn("│", vertical)
+        app.handle_key("up")
+        self.assertEqual(state.panes[1].split_orientation, "horizontal")
+        self.assertIn("─" * 10, render_frame(state, state.width, state.height))
+
+        state.panes[1].column_offset = 2
+        app.handle_key("left")
+        self.assertLess(state.panes[1].column_offset, 2)
+        state.panes[1].column_offset = 0
+        app.handle_key("left")
+        self.assertEqual(state.focus, "sidebar")
+        state.selected_dataset = 1
+        app.handle_key("right")
+        self.assertEqual(state.focus, "table")
+        app.handle_key("\t")
+        self.assertEqual(state.active_pane_index, 0)
+        app.handle_key("b")
+        state.selected_dataset = 1
+        app.handle_key("left")
+        self.assertEqual([pane.dataset for pane in state.panes], ["/a"])
+        app.close()
+
+    def test_split_plot_stays_in_active_pane(self):
+        state = AppState(files=["sample.h5"], width=80, height=20)
+        state.view = "split"
+        state.focus = "table"
+        state.panes = [
+            TablePane("/a", table_columns=["x", "y"], table_rows=[["1", "2"]]),
+            TablePane("/b", table_columns=["x", "y"], table_rows=[["3", "4"]]),
+        ]
+        state.active_pane_index = 1
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state = state
+        submitted = []
+        app.submit = lambda kind, command=None, payload=None, pane=None: submitted.append(
+            (kind, payload)
+        ) or True
+
+        expected_width, expected_height = app.pane_size(state.panes[1])
+        app.start_plot({"columns": ["x", "y"], "type": "line"})
+        self.assertEqual(state.view, "split")
+        self.assertIs(state.plot_pane, state.panes[1])
+        self.assertEqual(submitted[-1][1]["width"], max(20, expected_width))
+        self.assertEqual(submitted[-1][1]["height"], max(8, expected_height - 3))
+
+        state.job_status = "done"
+        state.plot_header = "Pane plot"
+        state.plot_content = "PLOT BODY"
+        frame = render_frame(state, state.width, state.height)
+        self.assertIn("/a", frame)
+        self.assertIn("PLOT BODY", frame)
+        app.handle_key("b")
+        self.assertIsNone(state.plot_pane)
+        self.assertEqual(state.view, "split")
+        app.close()
+
+    def test_split_master_header_spans_full_width(self):
+        state = AppState(files=["radar_data_2.h5"], width=80, height=20)
+        state.view = "split"
+        state.focus = "table"
+        state.panes = [
+            TablePane("/a", table_columns=["x"], table_rows=[["1"]], total_rows=1),
+        ]
+        lines = render_frame(state, state.width, state.height).splitlines()
+        self.assertEqual(len(lines), state.height)
+        self.assertIn("VIME", lines[0])
+        self.assertIn("radar_data_2.h5", lines[0])
+        self.assertEqual(len(lines[0]), state.width)
+        self.assertTrue(lines[1].startswith("="))
+        self.assertIn("│", lines[2])
+        self.assertIn("/a", lines[2])
+
+    def test_footer_keeps_keybinds_with_message(self):
+        state = AppState(files=["sample.h5"], width=120, height=20)
+        state.view = "split"
+        state.focus = "table"
+        state.panes = [
+            TablePane("/a", table_columns=["x"], table_rows=[["1"]], total_rows=1),
+        ]
+        state.message = "Loading..."
+        footer = render_frame(state, state.width, state.height).splitlines()[-1]
+        self.assertIn("Loading...", footer)
+        self.assertIn("↑/↓", footer)
+        state.message = ""
+        state.error = "boom"
+        footer = render_frame(state, state.width, state.height).splitlines()[-1]
+        self.assertIn("Error: boom", footer)
+        self.assertIn("Tab panes", footer)
+        # Narrow width still keeps keybinds even if the status is cropped.
+        state.width = 40
+        footer = render_frame(state, state.width, state.height).splitlines()[-1]
+        self.assertIn("↑/↓", footer)
+        self.assertEqual(len(footer), 40)
+
+    def test_plot_prompt_has_no_default_text(self):
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state.view = "table"
+        app.state.panes = [
+            TablePane("/a", table_columns=["x", "y"], table_rows=[["1", "2"]]),
+        ]
+        app.state.focus = "table"
+        app.handle_key("p")
+        self.assertTrue(app.state.prompt)
+        self.assertEqual(app.state.prompt_kind, "plot")
+        self.assertEqual(app.state.prompt_text, "")
+        app.close()
+
+    def test_column_guide_appears_above_prompt_toolbar(self):
+        state = AppState(files=["sample.h5"], width=60, height=10, view="table")
+        state.panes = [
+            TablePane(
+                "/a",
+                table_columns=["time", "value", "site"],
+                table_rows=[["1", "2", "west"]],
+                total_rows=1,
+            ),
+        ]
+        state.focus = "table"
+        state.prompt = True
+        for kind in (
+            "plot", "filter", "yank", "plot_x", "plot_y", "plot_group",
+            "plot_xlim", "plot_ylim",
+        ):
+            state.prompt_kind = kind
+            lines = render_frame(state, state.width, state.height).splitlines()
+            self.assertEqual(len(lines), state.height)
+            self.assertEqual(
+                lines[-2],
+                "[1] time  [2] value  [3] site",
+            )
+        state.prompt = False
+        self.assertNotIn("[1] time", render_frame(state, state.width, state.height))
+
+    def test_plot_view_hotkeys_update_and_regenerate_plot(self):
+        pane = TablePane(
+            "/a",
+            table_columns=["time", "value", "site"],
+            table_rows=[["1", "2", "west"]],
+            total_rows=1,
+        )
+        state = AppState(files=["sample.h5"], width=80, height=20)
+        state.view = "split"
+        state.focus = "table"
+        state.panes = [pane]
+        state.plot_pane = pane
+        state.plot_request = {
+            "dataset": "/a",
+            "columns": ["time", "value"],
+            "type": "line",
+            "_pane": pane,
+        }
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state = state
+        submitted = []
+        app.submit = lambda kind, command=None, payload=None, pane=None: (
+            submitted.append(payload) or True
+        )
+
+        for key in ("x", "3", "enter"):
+            app.handle_key(key)
+        self.assertEqual(submitted[-1]["columns"], ["site", "value"])
+
+        for key in ("y", "1", "enter"):
+            app.handle_key(key)
+        self.assertEqual(submitted[-1]["columns"], ["site", "time"])
+
+        for key in ("g", "2", "enter"):
+            app.handle_key(key)
+        self.assertEqual(submitted[-1]["groupby"], "value")
+
+        app.handle_key("x")
+        app.handle_key("l")
+        self.assertEqual(state.prompt_kind, "plot_xlim")
+        for key in ("-", "1", " ", "2", ".", "5", "enter"):
+            app.handle_key(key)
+        self.assertEqual(submitted[-1]["x_lim"], [-1.0, 2.5])
+
+        app.handle_key("y")
+        app.handle_key("l")
+        self.assertEqual(state.prompt_kind, "plot_ylim")
+        for key in ("0", " ", "1", "0", "enter"):
+            app.handle_key(key)
+        self.assertEqual(submitted[-1]["y_lim"], [0.0, 10.0])
+        self.assertIs(state.plot_request["_pane"], pane)
+
+        count = len(submitted)
+        for key in ("x", "9", "enter"):
+            app.handle_key(key)
+        self.assertEqual(len(submitted), count)
+        self.assertIn("Invalid plot update", state.error)
+        app.close()
 
 
 if __name__ == "__main__":
