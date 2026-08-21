@@ -2,10 +2,16 @@
 """
 JSON-backed table column configuration for VIME.
 
-Schema:
+Schema (current):
 {
-  "<table_name>": ["col_a", "col_b", ...]
+  "<table_name>": {
+    "columns": ["col_a", "col_b"],
+    "hidden": ["col_c"]
+  }
 }
+
+Legacy list form `{ "<table_name>": ["col_a", ...] }` is still accepted.
+Tables with no hidden columns are written back as that list.
 """
 
 import json
@@ -17,13 +23,26 @@ from typing import Dict, List, Optional
 logger = logging.getLogger("vime.config")
 
 
+def _unique_strings(values) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    seen = set()
+    ordered = []
+    for col in values:
+        if not isinstance(col, str) or col in seen:
+            continue
+        seen.add(col)
+        ordered.append(col)
+    return ordered
+
+
 class Config:
-    """Load and persist per-table ordered column configuration."""
+    """Load and persist per-table column order and hidden columns."""
 
     def __init__(self, path: Optional[str] = None):
         root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.path = path or os.path.join(root_dir, "config.json")
-        self._tables: Dict[str, List[str]] = {}
+        self._tables: Dict[str, Dict[str, List[str]]] = {}
         self._load()
 
     def _load(self):
@@ -41,73 +60,97 @@ class Config:
             self._tables = {}
 
     @staticmethod
-    def _sanitize(data) -> Dict[str, List[str]]:
-        """Keep only dict[str, list[str]] with duplicate columns removed."""
+    def _sanitize(data) -> Dict[str, Dict[str, List[str]]]:
+        """Accept list or {columns, hidden} entries; drop duplicates."""
         if not isinstance(data, dict):
             return {}
-        out: Dict[str, List[str]] = {}
-        for table_name, cols in data.items():
-            if not isinstance(table_name, str) or not isinstance(cols, list):
+        out: Dict[str, Dict[str, List[str]]] = {}
+        for table_name, value in data.items():
+            if not isinstance(table_name, str):
                 continue
-            seen = set()
-            ordered = []
-            for col in cols:
-                if not isinstance(col, str):
-                    continue
-                if col in seen:
-                    continue
-                seen.add(col)
-                ordered.append(col)
-            out[table_name] = ordered
+            if isinstance(value, list):
+                columns, hidden = _unique_strings(value), []
+            elif isinstance(value, dict):
+                columns = _unique_strings(value.get("columns"))
+                hidden = [col for col in _unique_strings(value.get("hidden")) if col not in columns]
+            else:
+                continue
+            out[table_name] = {"columns": columns, "hidden": hidden}
         return out
 
     def save(self):
-        """Persist config atomically."""
+        """Persist config atomically. List form when a table has no hidden columns."""
         parent = os.path.dirname(self.path)
         if parent:
             os.makedirs(parent, exist_ok=True)
+        payload = {}
+        for table_name, entry in self._tables.items():
+            if entry["hidden"]:
+                payload[table_name] = {
+                    "columns": entry["columns"],
+                    "hidden": entry["hidden"],
+                }
+            else:
+                payload[table_name] = entry["columns"]
         tmp_path = self.path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(self._tables, handle, indent=2, sort_keys=True)
+            json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(tmp_path, self.path)
 
     def get_columns(self, table_name: str) -> Optional[List[str]]:
-        cols = self._tables.get(table_name)
-        if cols is None:
+        entry = self._tables.get(table_name)
+        if entry is None:
             return None
-        return list(cols)
+        return list(entry["columns"])
+
+    def get_hidden(self, table_name: str) -> List[str]:
+        entry = self._tables.get(table_name)
+        if entry is None:
+            return []
+        return list(entry["hidden"])
+
+    def toggle_hidden(self, table_name: str, column: str) -> bool:
+        """Move *column* between visible and hidden. Returns True if now hidden."""
+        column = str(column)
+        entry = self._tables.setdefault(table_name, {"columns": [], "hidden": []})
+        if column in entry["hidden"]:
+            entry["hidden"].remove(column)
+            if column not in entry["columns"]:
+                entry["columns"].append(column)
+            self.save()
+            return False
+        if column in entry["columns"]:
+            entry["columns"].remove(column)
+        if column not in entry["hidden"]:
+            entry["hidden"].append(column)
+        self.save()
+        return True
 
     def merge_table_columns(self, table_name: str, discovered_columns: List[str]) -> List[str]:
         """
-        Merge discovered columns into stored order and persist when changed.
+        Merge discovered columns into stored visible order and persist when changed.
 
-        Existing order is preserved and newly discovered columns are appended.
+        Existing visible order is preserved. Newly discovered columns are appended
+        unless they are hidden.
         """
-        discovered = []
-        seen = set()
-        for col in discovered_columns:
-            col_name = str(col)
-            if col_name in seen:
-                continue
-            seen.add(col_name)
-            discovered.append(col_name)
+        discovered = _unique_strings([str(col) for col in discovered_columns])
+        entry = self._tables.get(table_name)
+        if entry is None:
+            self._tables[table_name] = {"columns": list(discovered), "hidden": []}
+            self.save()
+            return list(discovered)
 
-        current = self._tables.get(table_name, [])
-        updated = list(current)
+        hidden = set(entry["hidden"])
+        updated = list(entry["columns"])
         changed = False
-
         for col in discovered:
-            if col not in current:
+            if col not in updated and col not in hidden:
                 updated.append(col)
                 changed = True
 
-        if table_name not in self._tables:
-            updated = discovered
-            changed = True
-
         if changed:
-            self._tables[table_name] = updated
+            entry["columns"] = updated
             self.save()
 
-        return list(self._tables.get(table_name, discovered))
+        return list(entry["columns"])

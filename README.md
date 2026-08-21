@@ -47,6 +47,7 @@ Keys:
 - `g`/`GG`: first/last page; `5g` and `5GG` offset from that edge
 - `h`/`l`: move one column
 - Left/Right in a table: move one visible column viewport
+- `l`/Right at the last column: cycle back to the first column
 - Up/Down: move the selected row
 - Enter in the dataset list: open the selected table full-window
 - Right in the dataset list/sidebar: open or focus a table in a vertical split
@@ -59,12 +60,13 @@ Keys:
 - `f`: filter with `column operator value` (for example `f 2 >= 10`)
 - `u`: clear the active filter
 - `y`: move columns to the front (for example `y 2 3 1`, then Enter)
-- `i`: dataset information
+- `i`: dataset information; type a column number and Enter to hide or unhide it
 - `p`: enter two plot columns and optional `line`/`scatter`
 - `c`: start the demo background compute job
 - `r`: refresh the current view
 - `o`: open the numbered Default/Free Vim options
-- Escape: cancel an active text prompt
+- Escape or Ctrl+B: cancel an active text prompt, discard a pending count, or
+  go back one view (same as `b`, but usable inside prompts)
 - `q`: quit the TUI (the daemon remains alive)
 
 Column numbers are 1-based. The plot prompt accepts column numbers or names,
@@ -107,7 +109,8 @@ Environment variables:
 The launcher scans the configured port range for an existing healthy daemon
 before starting one. The TUI sends keepalive requests while active.
 
-Column order remains configurable in `config.json`.
+Column order and hidden columns are stored in `config.json`. Hidden columns
+are skipped when a table is opened.
 
 Startup UI settings are stored in `settings.cfg`:
 

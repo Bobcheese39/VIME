@@ -1,12 +1,20 @@
 {
-  "/odometry": [
-    "timestamp",
-    "x_seq",
-    "y_seq",
-    "yaw_seq",
-    "vx",
-    "yaw_rate"
+  "/__computed__/compute_20260821_002603": [
+    "x",
+    "y"
   ],
+  "/odometry": {
+    "columns": [
+      "timestamp",
+      "x_seq",
+      "y_seq",
+      "yaw_seq",
+      "yaw_rate"
+    ],
+    "hidden": [
+      "vx"
+    ]
+  },
   "/radar_data": [
     "timestamp",
     "sensor_id",

@@ -130,8 +130,14 @@ class DataLoader:
                 return None
             storer = self.store.get_storer(name)
             if getattr(storer, "is_table", False):
+                if columns is not None and not columns:
+                    df = self.store.select(name, start=start, stop=stop)
+                    return df.iloc[:, 0:0]
                 df = self.store.select(
-                    name, start=start, stop=stop, columns=columns or None
+                    name,
+                    start=start,
+                    stop=stop,
+                    columns=None if columns is None else columns,
                 )
                 return df
             else:
@@ -147,7 +153,7 @@ class DataLoader:
     @staticmethod
     def _select_columns(df, columns):
         """Select columns by their display names while preserving order."""
-        if not columns:
+        if columns is None:
             return df
         by_name = {str(column): column for column in df.columns}
         selected = [by_name[str(column)] for column in columns if str(column) in by_name]

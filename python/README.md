@@ -147,11 +147,14 @@ DataFrame so subsequent pages are fast without unbounded cache growth.
 Request:
 
 ```json
-{"file": "/path/data.h5", "name": "/samples"}
+{"file": "/path/data.h5", "name": "/samples", "toggle_column": 3}
 ```
 
-Returns `content` containing shape, dtypes, non-null counts, and numeric
-summary. This on-demand analysis loads the selected dataset.
+`toggle_column` is optional (1-based index or name) and moves that column
+between the visible list and `Hidden`. Returns `content` (shape, dtypes,
+non-null counts, numeric summary of visible columns) plus `columns` and
+`hidden` name lists. This on-demand analysis loads the selected dataset.
+Hidden columns are not loaded by later `/table_page` requests.
 
 ### `POST /plot_start`
 

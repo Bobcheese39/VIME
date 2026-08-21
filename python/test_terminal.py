@@ -3,9 +3,12 @@
 import unittest
 import os
 import tempfile
+from unittest.mock import patch
 
 from terminal import (
-    ALT_SCREEN_OFF, CURSOR_SHOW, TerminalSession, cleanup_sequence, decode_escape
+    ALT_SCREEN_OFF, CURSOR_SHOW, SGR_BOLD, SGR_RESET, SGR_REVERSE,
+    TerminalSession, cleanup_sequence, crop, decode_escape, pad, paint,
+    strip_style, visible_len,
 )
 import vime_tui
 from vime_tui import (
@@ -31,6 +34,51 @@ class TerminalHelpersTest(unittest.TestCase):
         self.assertTrue(cleanup.endswith(ALT_SCREEN_OFF))
         self.assertEqual(TerminalSession._normalize_character("\x02"), "ctrl_b")
         self.assertEqual(TerminalSession._normalize_character("\x05"), "ctrl_e")
+        self.assertEqual(TerminalSession._normalize_character("\x1b"), "escape")
+
+    def test_sgr_crop_pad_and_paint(self):
+        self.assertEqual(visible_len("hi"), 2)
+        self.assertEqual(crop("abcdef", 3), "abc")
+        self.assertEqual(pad("ab", 4), "ab  ")
+        with patch("terminal.style_enabled", return_value=True):
+            styled = paint(pad("hi", 5), SGR_REVERSE)
+        self.assertTrue(styled.startswith("\x1b[7m"))
+        self.assertTrue(styled.endswith(SGR_RESET))
+        self.assertEqual(visible_len(styled), 5)
+        self.assertEqual(strip_style(styled), "hi   ")
+        cropped = crop(styled, 2)
+        self.assertEqual(strip_style(cropped), "hi")
+        self.assertTrue(cropped.startswith("\x1b[7m"))
+        self.assertTrue(cropped.endswith(SGR_RESET))
+        with patch("terminal.style_enabled", return_value=False):
+            self.assertEqual(paint("hi", SGR_BOLD), "hi")
+
+    def test_chrome_uses_reverse_bars_and_strips_for_plain_text(self):
+        state = AppState(files=["sample.h5"], width=40, height=10, view="table")
+        state.table_columns = ["x", "y"]
+        state.table_rows = [["1", "2"]]
+        state.total_rows = 1
+        with patch("terminal.style_enabled", return_value=True):
+            frame = render_frame(state, state.width, state.height)
+        lines = frame.splitlines()
+        title, footer = lines[0], lines[-1]
+        self.assertIn("\x1b[1;7m", title)
+        self.assertEqual(visible_len(title), state.width)
+        self.assertTrue(title.endswith(SGR_RESET))
+        self.assertIn("\x1b[4m", frame)
+        self.assertIn("\x1b[7m", footer)
+        self.assertEqual(visible_len(footer), state.width)
+        self.assertTrue(footer.endswith(SGR_RESET))
+        plain = strip_style(frame)
+        self.assertNotIn("\x1b[", plain)
+        self.assertIn("x", plain)
+        state.error = "boom"
+        state.width = 120
+        with patch("terminal.style_enabled", return_value=True):
+            error_footer = render_frame(state, state.width, state.height).splitlines()[-1]
+        self.assertIn("\x1b[31;7m", error_footer)
+        self.assertIn("Error: boom", error_footer)
+        self.assertEqual(visible_len(error_footer), state.width)
 
     def test_complete_frames_follow_terminal_size(self):
         state = AppState(files=["sample.h5"])
@@ -42,7 +90,9 @@ class TerminalHelpersTest(unittest.TestCase):
         for width, height in ((40, 10), (80, 20)):
             frame = render_frame(state, width, height)
             self.assertEqual(len(frame.splitlines()), height)
-            self.assertTrue(all(len(line) <= width for line in frame.splitlines()))
+            self.assertTrue(all(
+                visible_len(line) <= width for line in frame.splitlines()
+            ))
         state.view = "plot"
         state.plot_content = "Plot\n\n⣿⣷⣤"
         self.assertEqual(len(render_frame(state, 40, 10).splitlines()), 10)
@@ -53,21 +103,21 @@ class TerminalHelpersTest(unittest.TestCase):
         state.table_rows = [[str(index)] for index in range(5)]
         state.total_rows = 5
         frame = render_frame(state, state.width, state.height)
-        self.assertIn("4", frame.splitlines()[-2])
+        self.assertIn("4", frame)
 
         app = Application("127.0.0.1", 1, ["sample.h5"])
         app.state = state
-        self.assertEqual(app.pane_page_limit(state.active_pane), 5)
+        self.assertEqual(app.pane_page_limit(state.active_pane), 6)
 
         state.view = "split"
         state.panes.append(TablePane("/other", table_columns=["value"]))
         pane_width, pane_height = app.pane_size(state.panes[0])
         state.panes[0].table_rows = [
-            [str(index)] for index in range(pane_height - 4)
+            [str(index)] for index in range(pane_height - 3)
         ]
-        self.assertEqual(app.pane_page_limit(state.panes[0]), pane_height - 4)
+        self.assertEqual(app.pane_page_limit(state.panes[0]), pane_height - 3)
         self.assertIn(
-            str(pane_height - 5),
+            str(pane_height - 4),
             vime_tui.render_table(
                 state.panes[0], pane_width, pane_height, focused=True
             )[-1],
@@ -97,10 +147,10 @@ class TerminalHelpersTest(unittest.TestCase):
         app.request_table = request
         for key in ("5", "j"):
             app.handle_key(key)
-        self.assertEqual(offsets[-1], 25)
+        self.assertEqual(offsets[-1], 24)
         for key in ("5", "g"):
             app.handle_key(key)
-        self.assertEqual(offsets[-1], 25)
+        self.assertEqual(offsets[-1], 24)
         for key in ("5", "G", "G"):
             app.handle_key(key)
         self.assertEqual(offsets[-1], 0)
@@ -277,7 +327,7 @@ class TerminalHelpersTest(unittest.TestCase):
         self.assertEqual(state.view, "split")
         self.assertIs(state.plot_pane, state.panes[1])
         self.assertEqual(submitted[-1][1]["width"], max(20, expected_width))
-        self.assertEqual(submitted[-1][1]["height"], max(8, expected_height - 3))
+        self.assertEqual(submitted[-1][1]["height"], max(8, expected_height - 2))
 
         state.job_status = "done"
         state.plot_header = "Pane plot"
@@ -301,10 +351,11 @@ class TerminalHelpersTest(unittest.TestCase):
         self.assertEqual(len(lines), state.height)
         self.assertIn("VIME", lines[0])
         self.assertIn("radar_data_2.h5", lines[0])
-        self.assertEqual(len(lines[0]), state.width)
-        self.assertTrue(lines[1].startswith("="))
-        self.assertIn("│", lines[2])
-        self.assertIn("/a", lines[2])
+        self.assertEqual(visible_len(lines[0]), state.width)
+        self.assertNotIn("\x1b[7m", lines[0])
+        self.assertNotIn("\x1b[1;7m", lines[0])
+        self.assertIn("│", lines[1])
+        self.assertIn("/a", lines[1])
 
     def test_footer_keeps_keybinds_with_message(self):
         state = AppState(files=["sample.h5"], width=120, height=20)
@@ -326,7 +377,7 @@ class TerminalHelpersTest(unittest.TestCase):
         state.width = 40
         footer = render_frame(state, state.width, state.height).splitlines()[-1]
         self.assertIn("↑/↓", footer)
-        self.assertEqual(len(footer), 40)
+        self.assertEqual(visible_len(footer), 40)
 
     def test_plot_prompt_has_no_default_text(self):
         app = Application("127.0.0.1", 1, ["sample.h5"])
@@ -339,6 +390,51 @@ class TerminalHelpersTest(unittest.TestCase):
         self.assertTrue(app.state.prompt)
         self.assertEqual(app.state.prompt_kind, "plot")
         self.assertEqual(app.state.prompt_text, "")
+        app.close()
+
+    def test_escape_cancels_input_and_columns_cycle(self):
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state.view = "table"
+        app.state.focus = "table"
+        app.state.panes = [
+            TablePane(
+                "/a",
+                table_columns=["a", "b", "c", "d"],
+                table_rows=[["1", "2", "3", "4"]],
+                total_rows=1,
+            ),
+        ]
+        app.request_table = lambda offset=None, pane=None: None
+
+        app.handle_key("f")
+        self.assertTrue(app.state.prompt)
+        app.handle_key("escape")
+        self.assertFalse(app.state.prompt)
+
+        app.handle_key("p")
+        self.assertTrue(app.state.prompt)
+        app.handle_key("ctrl_b")
+        self.assertFalse(app.state.prompt)
+
+        app.handle_key("5")
+        self.assertEqual(app.state.command_buffer, "5")
+        app.handle_key("escape")
+        self.assertEqual(app.state.command_buffer, "")
+        self.assertEqual(app.state.view, "table")
+        app.handle_key("escape")
+        self.assertEqual((app.state.view, app.state.focus), ("datasets", "sidebar"))
+
+        app.state.view = "table"
+        app.state.focus = "table"
+        for expected in (1, 2, 3, 0):
+            app.handle_key("l")
+            self.assertEqual(app.state.column_offset, expected)
+        app.move_columns(10)
+        self.assertEqual(app.state.column_offset, 3)
+        app.move_columns(1)
+        self.assertEqual(app.state.column_offset, 0)
+        app.move_columns(-1)
+        self.assertEqual(app.state.column_offset, 0)
         app.close()
 
     def test_column_guide_appears_above_prompt_toolbar(self):
@@ -424,6 +520,30 @@ class TerminalHelpersTest(unittest.TestCase):
             app.handle_key(key)
         self.assertEqual(len(submitted), count)
         self.assertIn("Invalid plot update", state.error)
+        app.close()
+
+    def test_info_digit_enter_toggles_column(self):
+        app = Application("127.0.0.1", 1, ["sample.h5"])
+        app.state.view = "info"
+        app.state.datasets = [{"name": "/t", "rows": 2, "cols": 3}]
+        submitted = []
+        app.submit = lambda kind, command=None, payload=None, pane=None: (
+            submitted.append((kind, command, payload)) or True
+        )
+        app.handle_key("1")
+        app.handle_key("2")
+        app.handle_key("enter")
+        self.assertEqual(submitted[-1][:2], ("info_toggle", "info"))
+        self.assertEqual(submitted[-1][2]["name"], "/t")
+        self.assertEqual(submitted[-1][2]["toggle_column"], "12")
+
+        pane = TablePane("/t", column_order=["a", "b", "c"])
+        app.state.panes = [pane]
+        refreshed = []
+        app.request_table = lambda offset=None, pane=None: refreshed.append(pane)
+        app.apply_info_hidden({"columns": ["a", "c"], "hidden": ["b"]})
+        self.assertEqual(pane.column_order, ["a", "c"])
+        self.assertIs(refreshed[-1], pane)
         app.close()
 
 

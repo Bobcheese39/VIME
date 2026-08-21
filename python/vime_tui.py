@@ -16,7 +16,10 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from terminal import TerminalSession
+from terminal import (
+    SGR_BOLD, SGR_RED, SGR_REVERSE, SGR_UNDERLINE, TerminalSession,
+    crop as _crop, pad, paint, strip_style,
+)
 
 
 KEEPALIVE_SECONDS = 120
@@ -27,8 +30,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_PATH = os.path.join(ROOT_DIR, "settings.cfg")
 VALID_MODES = {"default", "free_vim"}
 VALID_PLOT_TYPES = frozenset({"line", "scatter", "bar", "hist"})
-TABLE_CHROME_ROWS = 4  # title, rule, column header, and column separator
-MASTER_HEADER_ROWS = 2  # VIME+filename title and rule (full-width in split)
+TABLE_CHROME_ROWS = 3  # title, column header, and column separator
+MASTER_HEADER_ROWS = 1  # VIME+filename title (full-width in split)
 
 # Options-menu rows: each cycles its own setting independently on repeated
 # presses of its number key. "display" maps a stored value to shown text.
@@ -247,8 +250,13 @@ class AppState:
     filter_text = _pane_value("filter_text")
 
 
-def _crop(text, width):
-    return text[:max(0, width)]
+def _title_bar(text, width):
+    return paint(pad(text, width), SGR_BOLD, SGR_REVERSE)
+
+
+def _footer_bar(text, width, error=False):
+    codes = (SGR_RED, SGR_REVERSE) if error else (SGR_REVERSE,)
+    return paint(pad(text, width), *codes)
 
 
 def render_master_header(state, width, focused=False):
@@ -258,15 +266,12 @@ def render_master_header(state, width, focused=False):
         state.file_index + 1,
         len(state.files),
     )
-    return [
-        _crop(title, width).ljust(max(0, width)),
-        "=" * max(0, width),
-    ]
+    return [paint(pad(title, width), SGR_BOLD)]
 
 
 def render_dataset_list(state, width, height, sidebar=False):
     lines = [] if sidebar else render_master_header(state, width)
-    available = max(0, height if sidebar else height - 5)
+    available = max(0, height if sidebar else height - 4)
     start = max(0, state.selected_dataset - available + 1)
     for index, item in enumerate(state.datasets[start:start + available], start):
         marker = ">" if index == state.selected_dataset else " "
@@ -285,14 +290,13 @@ def render_dataset_list(state, width, height, sidebar=False):
 def render_table(state, width, height, focused=False):
     end = min(state.total_rows, state.table_offset + len(state.table_rows))
     lines = [
-        "{}{}  [rows {}-{} of {}]".format(
+        _title_bar("{}{}  [rows {}-{} of {}]".format(
             "> " if focused else "",
             state.active_dataset,
             state.table_offset + 1 if state.total_rows else 0,
             end,
             state.total_rows,
-        ),
-        "=" * max(0, width),
+        ), width),
     ]
     widths = []
     for index, column in enumerate(state.table_columns):
@@ -311,7 +315,7 @@ def render_table(state, width, height, focused=False):
         ]
         return sep.join(cells)
 
-    lines.append("  " + format_row(state.table_columns))
+    lines.append(paint("  " + format_row(state.table_columns), SGR_UNDERLINE))
     if borders:
         lines.append("  " + "-+-".join("-" * widths[index] for index in visible))
     for index, row in enumerate(state.table_rows[:max(0, height - TABLE_CHROME_ROWS)]):
@@ -344,9 +348,9 @@ def visible_column_indices(state, width, widths=None):
 
 
 def render_text_view(title, content, width, height):
-    # render_frame reserves 1 row for the footer; keep title + rule + body.
-    lines = [title, "=" * max(0, width)]
-    for line in content.splitlines()[:max(0, height - 3)]:
+    # render_frame reserves 1 row for the footer; keep title + body.
+    lines = [_title_bar(title, width)]
+    for line in content.splitlines()[:max(0, height - 2)]:
         lines.append(line)
     return lines
 
@@ -361,7 +365,7 @@ def render_job(state, width, height):
 
 
 def render_options(state, width, height):
-    lines = ["VIME Options", "=" * max(0, width)]
+    lines = [_title_bar("VIME Options", width)]
     label_width = max(len(opt["label"]) for opt in OPTIONS)
     for index, opt in enumerate(OPTIONS, start=1):
         current = getattr(state, opt["state_attr"])
@@ -391,6 +395,8 @@ def footer_keybinds(state):
         return "↑/↓ row  j/k page  h/l column  ←/→ viewport  Tab panes  b sidebar/back"
     if state.view == "options":
         return "Press 1-{} to cycle  b back  q quit".format(len(OPTIONS))
+    if state.view == "info":
+        return "N Enter hide/unhide  b back  r refresh  o options  q quit"
     return "b back  r refresh  o options  q quit"
 
 
@@ -402,6 +408,7 @@ def _compose_footer(status, binds, width):
 
 
 def render_footer(state, width):
+    error = False
     if state.prompt:
         labels = {
             "plot": "Plot (x y [type] [logx|logy|group=|agg=|x=a:b|y=a:b|sort=x]): ",
@@ -413,43 +420,45 @@ def render_footer(state, width):
             "plot_xlim": "X limits (min max): ",
             "plot_ylim": "Y limits (min max): ",
         }
-        return _crop(labels.get(state.prompt_kind, "> ") + state.prompt_text, width)
-    if state.pending_g:
-        return _crop((state.command_buffer or "") + "G", width)
-    if state.command_buffer:
-        return _crop(state.command_buffer, width)
-
-    binds = footer_keybinds(state)
-    if state.error:
-        return _compose_footer("Error: " + state.error, binds, width)
-    if state.message:
-        return _compose_footer(state.message, binds, width)
-
-    status = []
-    if (
-        state.view in ("table", "split")
-        and state.focus == "table"
-        and state.active_pane is not state.plot_pane
-    ):
-        pane_width = state.width
-        if state.view == "split" and state.active_pane is not None:
-            sidebar_width = min(
-                30, max(14, state.width // 4), max(1, state.width - 10)
-            )
-            pane_width = pane_rectangles(
-                state.panes,
-                max(1, state.width - sidebar_width - 1),
-                max(1, state.height - 1 - MASTER_HEADER_ROWS),
-            ).get(state.active_pane_index, (state.width, state.height))[0]
-        if state.filter_text:
-            status.append("filter: " + state.filter_text)
-        if state.table_columns:
-            status.append("cols {}-{}/{}".format(
-                state.column_offset + 1,
-                max(visible_column_indices(state.active_pane, pane_width) or [0]) + 1,
-                len(state.table_columns),
-            ))
-    return _compose_footer("  ".join(status), binds, width)
+        text = _crop(labels.get(state.prompt_kind, "> ") + state.prompt_text, width)
+    elif state.pending_g:
+        text = _crop((state.command_buffer or "") + "G", width)
+    elif state.command_buffer:
+        text = _crop(state.command_buffer, width)
+    else:
+        binds = footer_keybinds(state)
+        if state.error:
+            error = True
+            text = _compose_footer("Error: " + state.error, binds, width)
+        elif state.message:
+            text = _compose_footer(state.message, binds, width)
+        else:
+            status = []
+            if (
+                state.view in ("table", "split")
+                and state.focus == "table"
+                and state.active_pane is not state.plot_pane
+            ):
+                pane_width = state.width
+                if state.view == "split" and state.active_pane is not None:
+                    sidebar_width = min(
+                        30, max(14, state.width // 4), max(1, state.width - 10)
+                    )
+                    pane_width = pane_rectangles(
+                        state.panes,
+                        max(1, state.width - sidebar_width - 1),
+                        max(1, state.height - 1 - MASTER_HEADER_ROWS),
+                    ).get(state.active_pane_index, (state.width, state.height))[0]
+                if state.filter_text:
+                    status.append("filter: " + state.filter_text)
+                if state.table_columns:
+                    status.append("cols {}-{}/{}".format(
+                        state.column_offset + 1,
+                        max(visible_column_indices(state.active_pane, pane_width) or [0]) + 1,
+                        len(state.table_columns),
+                    ))
+            text = _compose_footer("  ".join(status), binds, width)
+    return _footer_bar(text, width, error=error)
 
 
 def render_column_guide(state, width):
@@ -466,7 +475,7 @@ def render_column_guide(state, width):
 
 
 def _fit(lines, width, height):
-    visible = [_crop(line, width).ljust(width) for line in lines[:height]]
+    visible = [pad(line, width) for line in lines[:height]]
     visible.extend(" " * width for _ in range(height - len(visible)))
     return visible
 
@@ -705,6 +714,25 @@ class Application:
             self.content_return_focus = self.state.focus
             self.submit("info", "info", {"name": self.state.active_dataset})
 
+    def toggle_info_column(self, reference):
+        if not self.state.active_dataset:
+            return
+        self.submit("info_toggle", "info", {
+            "name": self.state.active_dataset,
+            "toggle_column": reference,
+        })
+
+    def apply_info_hidden(self, response):
+        pane = self.state.pane_for(self.state.active_dataset)
+        if pane is None or not pane.column_order:
+            return
+        hidden = set(response.get("hidden") or [])
+        pane.column_order = [column for column in pane.column_order if column not in hidden]
+        for column in response.get("columns") or []:
+            if column not in pane.column_order:
+                pane.column_order.append(column)
+        self.request_table(pane=pane)
+
     def start_plot(self, payload=None):
         if payload is None:
             try:
@@ -722,11 +750,11 @@ class Application:
         if split_plot:
             pane_width, pane_height = self.pane_size(target_pane)
             payload["width"] = max(20, pane_width)
-            payload["height"] = max(8, pane_height - 3)
+            payload["height"] = max(8, pane_height - 2)
         else:
             payload["width"] = max(20, self.state.width - 2)
-            # Match render_text_view body budget (height - 3 under frame footer).
-            payload["height"] = max(8, self.state.height - 3)
+            # Match render_text_view body budget (height - 2 under frame footer).
+            payload["height"] = max(8, self.state.height - 2)
         payload["charset"] = self.state.plot_charset
         if target_pane is not None and target_pane.filter_spec:
             payload["filter"] = target_pane.filter_spec
@@ -918,9 +946,11 @@ class Application:
             pane.selected_row = min(
                 pane.selected_row, max(0, len(pane.table_rows) - 1)
             )
-        elif kind == "info":
+        elif kind in ("info", "info_toggle"):
             self.state.info_content = response.get("content", "")
             self.state.view = "info"
+            if kind == "info_toggle":
+                self.apply_info_hidden(response)
         elif kind in ("plot_start", "compute_start"):
             self.state.job_status = response.get("status", "running")
             if kind != "plot_start" or self.state.plot_pane is None:
@@ -982,7 +1012,9 @@ class Application:
                 mode="w", suffix=".txt", encoding="utf-8", delete=False
             ) as handle:
                 path = handle.name
-                handle.write(render_frame(self.state, self.state.width, self.state.height))
+                handle.write(strip_style(render_frame(
+                    self.state, self.state.width, self.state.height
+                )))
                 handle.write("\n")
             with terminal.suspended():
                 subprocess.run([
@@ -1176,6 +1208,11 @@ class Application:
 
     def move_columns(self, amount):
         maximum = max(0, len(self.state.table_columns) - 1)
+        # Only wrap once already parked on the last column, so a wide jump lands
+        # there first instead of skipping past it.
+        if amount > 0 and self.state.column_offset >= maximum:
+            self.state.column_offset = 0
+            return
         self.state.column_offset = min(maximum, max(0, self.state.column_offset + amount))
 
     def viewport_columns(self):
@@ -1193,6 +1230,8 @@ class Application:
     def handle_key(self, key):
         if key is None:
             return
+        if key == "ctrl_b":
+            key = "escape"
         if self.state.prompt:
             self.handle_prompt_key(key)
             return
@@ -1206,13 +1245,12 @@ class Application:
             self.state.view = "options"
             self.state.dirty = True
             return
-        if key == "escape":
-            if self.state.command_buffer or self.state.pending_g:
-                self.state.command_buffer = ""
-                self.state.pending_g = False
+        if key == "escape" and (self.state.command_buffer or self.state.pending_g):
+            self.state.command_buffer = ""
+            self.state.pending_g = False
             self.state.dirty = True
             return
-        if key == "b":
+        if key in ("b", "escape"):
             self.state.command_buffer = ""
             self.state.pending_g = False
             if (
@@ -1261,6 +1299,15 @@ class Application:
                 self.submit(command, command)
             else:
                 self.submit("list_tables", "list_tables")
+            return
+
+        if self.state.view == "info":
+            if isinstance(key, str) and len(key) == 1 and key.isdigit():
+                self.state.command_buffer += key
+            elif key == "enter" and self.state.command_buffer:
+                self.toggle_info_column(self.state.command_buffer)
+                self.state.command_buffer = ""
+            self.state.dirty = True
             return
 
         if self.state.view == "plot" or (

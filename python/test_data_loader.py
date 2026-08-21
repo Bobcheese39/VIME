@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from data_loader import DataLoader
+from config import Config
 from server.app import dispatch
 from server.http import VimeHTTPServer, make_handler
 from server.state import ServerState
@@ -259,6 +260,57 @@ class DataLoaderSliceTest(unittest.TestCase):
         self.assertTrue(reopened["ok"])
         self.assertIs(state.get_session(path), session)
         self.assertTrue(any(item["name"].startswith("/__computed__") for item in reopened["tables"]))
+        state.close_handles()
+
+    def test_hidden_column_skipped_on_table_page(self):
+        path = self.path("hide.h5")
+        frame = pd.DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]})
+        with pd.HDFStore(path, mode="w") as store:
+            store.put("/t", frame, format="table")
+
+        state = ServerState()
+        state.config = Config(self.path("hide.json"))
+        self.assertTrue(dispatch(state, {"cmd": "open", "file": path})["ok"])
+        toggled = dispatch(state, {
+            "cmd": "info",
+            "file": path,
+            "name": "/t",
+            "toggle_column": 2,
+        })
+        self.assertTrue(toggled["ok"])
+        self.assertEqual(toggled["hidden"], ["b"])
+        self.assertEqual(toggled["columns"], ["a", "c"])
+        self.assertIn("Hidden:", toggled["content"])
+        self.assertRegex(toggled["content"], r"Hidden:\n.+\n\s+2\s+b\b")
+
+        session = state.get_session(path)
+        loaded = []
+        real = session.load_table_slice
+
+        def wrapped(name, start, stop, columns=None):
+            loaded.append(columns)
+            return real(name, start, stop, columns)
+
+        session.load_table_slice = wrapped
+        page = dispatch(state, {
+            "cmd": "table_page",
+            "file": path,
+            "dataset": "/t",
+            "offset": 0,
+            "limit": 2,
+        })
+        self.assertTrue(page["ok"])
+        self.assertEqual(page["columns"], ["a", "c"])
+        self.assertEqual(loaded[-1], ["a", "c"])
+
+        restored = dispatch(state, {
+            "cmd": "info",
+            "file": path,
+            "name": "/t",
+            "toggle_column": 2,
+        })
+        self.assertEqual(restored["hidden"], [])
+        self.assertNotIn("Hidden:", restored["content"])
         state.close_handles()
 
     def test_http_json_page_round_trip(self):

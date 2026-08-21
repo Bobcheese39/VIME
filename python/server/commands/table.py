@@ -26,9 +26,10 @@ def handle_page(state, payload):
         return {"ok": False, "error": str(exc)}
 
     name = payload.get("dataset", payload.get("name", ""))
-    columns = payload.get("columns")
-    if columns is not None and not isinstance(columns, list):
+    requested = payload.get("columns")
+    if requested is not None and not isinstance(requested, list):
         return {"ok": False, "error": "columns must be a list"}
+    columns = _page_columns(session, name, requested)
 
     filter_spec = payload.get("filter")
     if filter_spec is not None:
@@ -52,7 +53,7 @@ def handle_page(state, payload):
         if not isinstance(total_rows, int):
             total_rows = offset + len(df)
 
-    if columns is None:
+    if requested is None:
         df = _apply_column_config(session, name, df)
 
     float_formatting = payload.get("float_formatting") is True
@@ -149,6 +150,19 @@ def _display_cell(value, float_formatting=False, path_formatting=False):
     return text.rsplit("/", 1)[-1] if path_formatting else text
 
 
+def _page_columns(session, table_name, requested):
+    """Visible columns to load: strip hidden names, or use stored visible order."""
+    if session.config is None:
+        return requested
+    hidden = set(session.config.get_hidden(table_name))
+    if requested is not None:
+        return [column for column in requested if str(column) not in hidden]
+    visible = session.config.get_columns(table_name)
+    if visible is None:
+        return None
+    return [column for column in visible if column not in hidden]
+
+
 def _apply_column_config(session, table_name, df):
     """Apply configured column order/visibility for a table."""
     if session.config is None:
@@ -164,5 +178,5 @@ def _apply_column_config(session, table_name, df):
     col_map = {str(col): col for col in df.columns}
     ordered_actual = [col_map[col] for col in configured if col in col_map]
     if not ordered_actual:
-        return df
+        return df.iloc[:, 0:0] if not configured else df
     return df.loc[:, ordered_actual]
